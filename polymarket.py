@@ -156,16 +156,17 @@ class PolymarketClient:
         Returns base_fee (e.g., 1000 = 10% base rate).
         Actual fee = price * (1 - price) * base_fee / 10000
         """
+        DEFAULT_FEE_BPS = 1000  # Fallback: 10% base rate (typical Polymarket fee)
         try:
             resp = self.session.get(
                 f"{self.clob}/fee-rate", params={"token_id": token_id}, timeout=10
             )
             resp.raise_for_status()
             data = resp.json()
-            return int(data.get("base_fee", 0))
+            return int(data.get("base_fee", DEFAULT_FEE_BPS))
         except Exception as e:
-            print(f"[polymarket] Error fetching fee rate: {e}")
-            return 0
+            print(f"[polymarket] Error fetching fee rate: {e}, using default {DEFAULT_FEE_BPS} bps")
+            return DEFAULT_FEE_BPS
 
     @staticmethod
     def calculate_fee(price: float, base_fee_bps: int) -> float:
