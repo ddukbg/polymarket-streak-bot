@@ -72,6 +72,11 @@ class Trade:
     best_bid: float = 0.0  # best bid price at execution
     best_ask: float = 0.0  # best ask price at execution
 
+    # === UNREALIZED P&L (for pending trades) ===
+    current_price: float | None = None  # current market price for our direction
+    unrealized_pnl: float | None = None  # estimated PnL based on current price
+    implied_outcome: str | None = None  # "up" or "down" based on which side > 50%
+
     def to_history_dict(self) -> dict:
         """Convert trade to a detailed history dictionary."""
         exec_time = datetime.fromtimestamp(
@@ -335,12 +340,16 @@ class TradingState:
             writer.writerows(history)
         print(f"Exported {len(history)} trades to {filepath}")
 
-    def print_history(self, limit: int = 20):
+    def print_history(self, limit: int = 20, update_unrealized: bool = True):
         """Print recent trade history to console."""
         trades = self.trades[-limit:]
         if not trades:
             print("No trade history")
             return
+
+        # Update unrealized PnL for pending trades
+        if update_unrealized:
+            self.update_unrealized_pnl()
 
         print(f"\n{'='*80}")
         print(f"TRADE HISTORY (last {len(trades)} trades) - {TIMEZONE_NAME}")
@@ -374,7 +383,15 @@ class TradingState:
                       f"Gross: ${t.gross_profit:+.2f} | Fee: ${t.fee_amount:.2f} | "
                       f"Net: ${t.pnl:+.2f}")
             else:
-                print(f"   Result: {status} PENDING")
+                # Show unrealized PnL for pending trades
+                if t.unrealized_pnl is not None and t.current_price is not None:
+                    # Show if we're likely winning or losing
+                    likely = "LIKELY WIN" if t.direction == t.implied_outcome else "LIKELY LOSS"
+                    print(f"   Result: {status} PENDING | "
+                          f"Price: {t.current_price:.2f} ({likely}) | "
+                          f"Est. PnL: ${t.unrealized_pnl:+.2f}")
+                else:
+                    print(f"   Result: {status} PENDING")
 
             # Copytrade details
             if t.strategy == "copytrade" and t.trader_name:
@@ -384,32 +401,104 @@ class TradingState:
         print(f"\n{'='*80}")
         print(f"SUMMARY")
         print(f"{'='*80}")
-        total_pnl = sum(t.pnl for t in trades if t.outcome)
+        realized_pnl = sum(t.pnl for t in trades if t.outcome)
+        unrealized_pnl = sum(t.unrealized_pnl for t in trades if t.outcome is None and t.unrealized_pnl is not None)
+        total_pnl = realized_pnl + unrealized_pnl
         wins = sum(1 for t in trades if t.won is True)
         losses = sum(1 for t in trades if t.won is False)
-        pending = sum(1 for t in trades if t.outcome is None)
+        pending_trades = [t for t in trades if t.outcome is None]
+        pending_count = len(pending_trades)
         total_fees = sum(t.fee_amount for t in trades if t.outcome)
 
-        print(f"Trades: {wins}W / {losses}L / {pending}P | "
-              f"Win Rate: {wins/(wins+losses)*100:.1f}%" if wins+losses > 0 else "N/A")
-        print(f"Total P&L: ${total_pnl:+.2f} | Total Fees Paid: ${total_fees:.2f}")
+        win_rate_str = f"Win Rate: {wins/(wins+losses)*100:.1f}%" if wins+losses > 0 else "N/A"
+        print(f"Trades: {wins}W / {losses}L / {pending_count}P | {win_rate_str}")
+        print(f"Realized P&L: ${realized_pnl:+.2f} | Fees Paid: ${total_fees:.2f}")
+        if pending_count > 0 and unrealized_pnl != 0:
+            print(f"Unrealized P&L: ${unrealized_pnl:+.2f} (from {pending_count} pending)")
+            print(f"Total P&L (est): ${total_pnl:+.2f}")
         print(f"Current Bankroll: ${self.bankroll:.2f}")
         print(f"{'='*80}\n")
 
-    def get_statistics(self) -> dict:
+    def update_unrealized_pnl(self):
+        """Update unrealized PnL for all pending trades based on current market prices."""
+        from polymarket import PolymarketClient
+
+        pending = [t for t in self.trades if t.outcome is None]
+        if not pending:
+            return
+
+        client = PolymarketClient()
+
+        for trade in pending:
+            try:
+                market = client.get_market(trade.timestamp)
+                if not market:
+                    continue
+
+                # Get current price for our direction
+                if trade.direction == "up":
+                    current_price = market.up_price
+                    opposing_price = market.down_price
+                else:
+                    current_price = market.down_price
+                    opposing_price = market.up_price
+
+                trade.current_price = current_price
+
+                # Implied outcome based on which side has higher probability
+                if market.up_price > market.down_price:
+                    trade.implied_outcome = "up"
+                elif market.down_price > market.up_price:
+                    trade.implied_outcome = "down"
+                else:
+                    trade.implied_outcome = None
+
+                # Calculate unrealized PnL
+                # If we win: receive $1 per share, minus fees
+                # If we lose: lose entire amount
+                exec_price = trade.execution_price if trade.execution_price > 0 else trade.entry_price
+                shares = trade.amount / exec_price if exec_price > 0 else 0
+
+                # Expected value = (prob of win * win payout) + (prob of lose * lose payout)
+                # Win payout = shares - amount - fees
+                # Lose payout = -amount
+                win_prob = current_price
+                lose_prob = 1 - current_price
+
+                gross_win = shares - trade.amount
+                fee_on_win = gross_win * trade.fee_pct if gross_win > 0 else 0
+                net_win = gross_win - fee_on_win
+
+                # Unrealized PnL = expected value
+                trade.unrealized_pnl = (win_prob * net_win) + (lose_prob * (-trade.amount))
+
+            except Exception as e:
+                print(f"[unrealized] Error updating {trade.market_slug}: {e}")
+
+    def get_statistics(self, update_unrealized: bool = True) -> dict:
         """Get comprehensive trading statistics."""
+        # Update unrealized PnL for pending trades
+        if update_unrealized:
+            self.update_unrealized_pnl()
+
         settled = [t for t in self.trades if t.outcome]
+        pending = [t for t in self.trades if t.outcome is None]
         wins = [t for t in settled if t.won]
         losses = [t for t in settled if not t.won]
+
+        realized_pnl = sum(t.pnl for t in settled)
+        unrealized_pnl = sum(t.unrealized_pnl for t in pending if t.unrealized_pnl is not None)
 
         return {
             "total_trades": len(self.trades),
             "settled_trades": len(settled),
-            "pending_trades": len(self.trades) - len(settled),
+            "pending_trades": len(pending),
             "wins": len(wins),
             "losses": len(losses),
             "win_rate": len(wins) / len(settled) * 100 if settled else 0,
-            "total_pnl": sum(t.pnl for t in settled),
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "total_pnl": realized_pnl + unrealized_pnl,
             "total_fees_paid": sum(t.fee_amount for t in settled),
             "total_gross_profit": sum(t.gross_profit for t in settled),
             "avg_win": sum(t.pnl for t in wins) / len(wins) if wins else 0,

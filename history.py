@@ -106,7 +106,10 @@ def main():
         print(f"  Win Rate: {stats['win_rate']:.1f}%")
 
         print(f"\nProfit & Loss:")
-        print(f"  Total P&L:       ${stats['total_pnl']:+.2f}")
+        print(f"  Realized P&L:    ${stats['realized_pnl']:+.2f}")
+        if stats['pending_trades'] > 0:
+            print(f"  Unrealized P&L:  ${stats['unrealized_pnl']:+.2f} ({stats['pending_trades']} pending)")
+            print(f"  Total P&L (est): ${stats['total_pnl']:+.2f}")
         print(f"  Gross Profit:    ${stats['total_gross_profit']:+.2f}")
         print(f"  Fees Paid:       ${stats['total_fees_paid']:.2f}")
         print(f"  Avg Win:         ${stats['avg_win']:+.2f}")
