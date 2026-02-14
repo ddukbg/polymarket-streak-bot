@@ -11,6 +11,7 @@ Usage:
     python history.py --stats          # Show statistics only
     python history.py --export json    # Export to trade_history.json
     python history.py --export csv     # Export to trade_history.csv
+    python history.py --backfill       # Backfill settlement data for unsettled trades
 """
 
 import argparse
@@ -26,7 +27,18 @@ def main():
     parser.add_argument("--export", choices=["json", "csv"], help="Export history to file")
     parser.add_argument("--output", type=str, help="Output file path for export")
     parser.add_argument("--recent", action="store_true", help="Only show recent trades (from working state)")
+    parser.add_argument("--backfill", action="store_true", help="Backfill settlement data for unsettled trades")
     args = parser.parse_args()
+
+    # Backfill settlement data if requested
+    if args.backfill:
+        print("Backfilling settlement data for unsettled trades...")
+        updated = TradingState.backfill_settlements()
+        if updated > 0:
+            print(f"\nDone! Updated {updated} trades. Run 'python history.py --stats' to see results.")
+        else:
+            print("\nNo trades needed updating.")
+        return
 
     # Load full history by default, or recent only if requested
     if args.recent:

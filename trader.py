@@ -222,6 +222,9 @@ class TradingState:
         # Append new trades to full history file (never truncated)
         self._append_to_full_history()
 
+        # Update any settled trades in full history
+        self._update_settled_trades_in_history()
+
     def _append_to_full_history(self):
         """Append only new trades to the full history file."""
         history_file = "trade_history_full.json"
@@ -257,6 +260,56 @@ class TradingState:
 
         if new_trades:
             print(f"[history] Appended {len(new_trades)} trade(s) to {history_file} (total: {len(existing)})")
+
+    def _update_settled_trades_in_history(self):
+        """Update settled trades in the full history file."""
+        history_file = "trade_history_full.json"
+
+        if not os.path.exists(history_file):
+            return
+
+        # Find settled trades that need updating
+        settled_trades = {
+            f"{t.timestamp}_{t.executed_at}_{t.direction}": t
+            for t in self.trades
+            if t.outcome is not None  # has been settled
+        }
+
+        if not settled_trades:
+            return
+
+        # Load existing history
+        try:
+            with open(history_file) as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, Exception):
+            return
+
+        # Update settled trades in history
+        updated_count = 0
+        for i, entry in enumerate(history):
+            trade_id = f"{entry.get('timestamp')}_{entry.get('executed_at')}_{entry.get('direction')}"
+
+            # Check if this trade has been settled but history entry is not
+            if trade_id in settled_trades and entry.get("outcome") is None:
+                settled_trade = settled_trades[trade_id]
+                # Update settlement fields
+                history[i]["outcome"] = settled_trade.outcome
+                history[i]["won"] = settled_trade.won
+                history[i]["settled_at"] = settled_trade.settled_at
+                history[i]["pnl"] = settled_trade.pnl
+                history[i]["shares_bought"] = settled_trade.shares_bought
+                history[i]["gross_payout"] = settled_trade.gross_payout
+                history[i]["gross_profit"] = settled_trade.gross_profit
+                history[i]["fee_amount"] = settled_trade.fee_amount
+                history[i]["net_profit"] = settled_trade.net_profit
+                updated_count += 1
+
+        # Save if any updates were made
+        if updated_count > 0:
+            with open(history_file, "w") as f:
+                json.dump(history, f, indent=2)
+            print(f"[history] Updated {updated_count} settled trade(s) in {history_file}")
 
     def export_history_json(self, filepath: str = "trade_history.json"):
         """Export full trade history to JSON file."""
@@ -401,6 +454,98 @@ class TradingState:
                 print(f"[history] Error loading history: {e}")
 
         return state
+
+    @classmethod
+    def backfill_settlements(cls) -> int:
+        """Backfill settlement data for unsettled trades by querying markets.
+
+        Returns the number of trades updated.
+        """
+        from polymarket import PolymarketClient
+
+        history_file = "trade_history_full.json"
+        if not os.path.exists(history_file):
+            print("[backfill] No history file found")
+            return 0
+
+        # Load history
+        try:
+            with open(history_file) as f:
+                history = json.load(f)
+        except Exception as e:
+            print(f"[backfill] Error loading history: {e}")
+            return 0
+
+        # Find unsettled trades
+        unsettled = [(i, t) for i, t in enumerate(history) if t.get("outcome") is None]
+        if not unsettled:
+            print("[backfill] No unsettled trades found")
+            return 0
+
+        print(f"[backfill] Found {len(unsettled)} unsettled trades, querying markets...")
+
+        client = PolymarketClient()
+        updated_count = 0
+
+        for idx, entry in unsettled:
+            market_ts = entry.get("timestamp")
+            if not market_ts:
+                continue
+
+            market = client.get_market(market_ts)
+            if not market:
+                print(f"[backfill] Market not found for ts={market_ts}")
+                continue
+
+            if not market.closed or not market.outcome:
+                print(f"[backfill] Market {market.slug} not yet settled")
+                continue
+
+            # Calculate settlement
+            direction = entry.get("direction")
+            outcome = market.outcome
+            won = direction == outcome
+            amount = entry.get("amount", 0)
+            exec_price = entry.get("execution_price") or entry.get("entry_price", 0.5)
+            fee_pct = entry.get("fee_pct", 0)
+
+            shares_bought = amount / exec_price if exec_price > 0 else 0
+
+            if won:
+                gross_payout = shares_bought  # $1 per share
+                gross_profit = gross_payout - amount
+                fee_amount = gross_profit * fee_pct if gross_profit > 0 else 0
+                net_profit = gross_profit - fee_amount
+                pnl = net_profit
+            else:
+                gross_payout = 0.0
+                gross_profit = -amount
+                fee_amount = 0.0
+                net_profit = -amount
+                pnl = -amount
+
+            # Update entry
+            history[idx]["outcome"] = outcome
+            history[idx]["won"] = won
+            history[idx]["settled_at"] = int(time.time() * 1000)
+            history[idx]["pnl"] = pnl
+            history[idx]["shares_bought"] = shares_bought
+            history[idx]["gross_payout"] = gross_payout
+            history[idx]["gross_profit"] = gross_profit
+            history[idx]["fee_amount"] = fee_amount
+            history[idx]["net_profit"] = net_profit
+
+            emoji = "✓" if won else "✗"
+            print(f"[backfill] {emoji} {market.slug}: {direction.upper()} -> {outcome.upper()} | PnL: ${pnl:+.2f}")
+            updated_count += 1
+
+        # Save updated history
+        if updated_count > 0:
+            with open(history_file, "w") as f:
+                json.dump(history, f, indent=2)
+            print(f"[backfill] Updated {updated_count} trades in {history_file}")
+
+        return updated_count
 
     @classmethod
     def load_full_history(cls) -> "TradingState":
