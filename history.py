@@ -12,9 +12,12 @@ Usage:
     python history.py --export json    # Export to trade_history.json
     python history.py --export csv     # Export to trade_history.csv
     python history.py --backfill       # Backfill settlement data for unsettled trades
+    python history.py --backfill --watch  # Keep retrying until all settled (every 5 min)
 """
 
 import argparse
+import time
+from datetime import datetime
 from config import TIMEZONE_NAME
 from trader import TradingState
 
@@ -28,16 +31,42 @@ def main():
     parser.add_argument("--output", type=str, help="Output file path for export")
     parser.add_argument("--recent", action="store_true", help="Only show recent trades (from working state)")
     parser.add_argument("--backfill", action="store_true", help="Backfill settlement data for unsettled trades")
+    parser.add_argument("--watch", action="store_true", help="Keep retrying backfill every 5 min until all settled")
+    parser.add_argument("--interval", type=int, default=300, help="Retry interval in seconds (default: 300)")
     args = parser.parse_args()
 
     # Backfill settlement data if requested
     if args.backfill:
         print("Backfilling settlement data for unsettled trades...")
-        updated = TradingState.backfill_settlements()
-        if updated > 0:
-            print(f"\nDone! Updated {updated} trades. Run 'python history.py --stats' to see results.")
-        else:
-            print("\nNo trades needed updating.")
+        total_updated = 0
+
+        while True:
+            updated, remaining = TradingState.backfill_settlements()
+            total_updated += updated
+
+            if remaining == 0:
+                # All trades settled
+                if total_updated > 0:
+                    print(f"\nDone! Updated {total_updated} trades. Run 'python history.py --stats' to see results.")
+                else:
+                    print("\nNo trades needed updating.")
+                break
+
+            if not args.watch:
+                # Not watching, just report and exit
+                print(f"\n{remaining} trade(s) still pending settlement.")
+                print(f"Run with --watch to keep retrying every {args.interval // 60} minutes.")
+                break
+
+            # Watch mode: wait and retry
+            next_check = datetime.now().strftime("%H:%M:%S")
+            print(f"\n[{next_check}] {remaining} trade(s) still pending. Retrying in {args.interval // 60} min...")
+            try:
+                time.sleep(args.interval)
+            except KeyboardInterrupt:
+                print("\nStopped watching.")
+                break
+
         return
 
     # Load full history by default, or recent only if requested

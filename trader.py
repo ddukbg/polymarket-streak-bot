@@ -456,17 +456,17 @@ class TradingState:
         return state
 
     @classmethod
-    def backfill_settlements(cls) -> int:
+    def backfill_settlements(cls) -> tuple[int, int]:
         """Backfill settlement data for unsettled trades by querying markets.
 
-        Returns the number of trades updated.
+        Returns tuple of (updated_count, remaining_count).
         """
         from polymarket import PolymarketClient
 
         history_file = "trade_history_full.json"
         if not os.path.exists(history_file):
             print("[backfill] No history file found")
-            return 0
+            return 0, 0
 
         # Load history
         try:
@@ -474,18 +474,19 @@ class TradingState:
                 history = json.load(f)
         except Exception as e:
             print(f"[backfill] Error loading history: {e}")
-            return 0
+            return 0, 0
 
         # Find unsettled trades
         unsettled = [(i, t) for i, t in enumerate(history) if t.get("outcome") is None]
         if not unsettled:
             print("[backfill] No unsettled trades found")
-            return 0
+            return 0, 0
 
         print(f"[backfill] Found {len(unsettled)} unsettled trades, querying markets...")
 
         client = PolymarketClient()
         updated_count = 0
+        still_pending = 0
 
         for idx, entry in unsettled:
             market_ts = entry.get("timestamp")
@@ -495,10 +496,12 @@ class TradingState:
             market = client.get_market(market_ts)
             if not market:
                 print(f"[backfill] Market not found for ts={market_ts}")
+                still_pending += 1
                 continue
 
             if not market.closed or not market.outcome:
                 print(f"[backfill] Market {market.slug} not yet settled")
+                still_pending += 1
                 continue
 
             # Calculate settlement
@@ -545,7 +548,7 @@ class TradingState:
                 json.dump(history, f, indent=2)
             print(f"[backfill] Updated {updated_count} trades in {history_file}")
 
-        return updated_count
+        return updated_count, still_pending
 
     @classmethod
     def load_full_history(cls) -> "TradingState":
