@@ -1,7 +1,24 @@
 import os
+from datetime import timezone, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Timezone configuration
+TIMEZONE_NAME = os.getenv("TIMEZONE", "Asia/Jakarta")
+
+# Create timezone object (Asia/Jakarta = UTC+7)
+_TZ_OFFSETS = {
+    "Asia/Jakarta": timedelta(hours=7),
+    "Asia/Singapore": timedelta(hours=8),
+    "Asia/Tokyo": timedelta(hours=9),
+    "UTC": timedelta(hours=0),
+    "America/New_York": timedelta(hours=-5),
+    "America/Los_Angeles": timedelta(hours=-8),
+}
+
+LOCAL_TZ = timezone(_TZ_OFFSETS.get(TIMEZONE_NAME, timedelta(hours=7)))
 
 
 class Config:

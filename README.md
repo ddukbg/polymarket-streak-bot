@@ -1,20 +1,11 @@
-# Polymarket BTC 5-Min Copytrade Bot
+# Polymarket BTC 5-Min Trading Bot
 
-A bot that copies BTC 5-minute up/down trades from profitable Polymarket traders.
+Two strategies for trading BTC 5-minute up/down markets on Polymarket:
 
-## Strategy
+1. **Copytrade** — Copy trades from profitable wallets in real-time
+2. **Streak Reversal** — Bet against consecutive streaks (mean reversion)
 
-Polymarket offers binary markets every 5 minutes: will BTC go up or down? Instead of predicting yourself, this bot monitors successful traders and copies their trades in real-time.
-
-**Why it works:** Some traders have consistent edge in these markets. By copying their entries, you can piggyback on their analysis without doing the work yourself.
-
-| Approach | Description |
-|----------|-------------|
-| Wallet Monitoring | Poll trader activity via Polymarket data API |
-| BTC 5-min Only | Filter for `btc-updown-5m-*` markets only |
-| Real-time Copy | Detect new trades within 5 seconds |
-
-> **Disclaimer:** This is experimental. Copied traders can lose. Past performance does not equal future results. Use at your own risk. Start with paper trading.
+> **Disclaimer:** This is experimental. Past performance does not guarantee future results. Use at your own risk. Start with paper trading.
 
 ## Quick Start
 
@@ -24,95 +15,199 @@ git clone https://github.com/0xrsydn/polymarket-streak-bot.git
 cd polymarket-streak-bot
 uv sync
 
-# Paper trade (no real money)
+# Copy .env and configure
 cp .env.example .env
+
+# Copytrade strategy (copy a wallet)
 uv run python copybot.py --paper --wallets 0x1d0034134e339a309700ff2d34e99fa2d48b0313
 
-# Or use the original streak reversal strategy
-uv run python bot.py --paper
+# Streak reversal strategy
+uv run python bot.py --paper --trigger 4
+
+# View trade history
+uv run python history.py --stats
 ```
 
-## Finding Traders to Copy
+## Strategies
 
+### Copytrade (`copybot.py`)
+
+Monitors wallet addresses and copies their BTC 5-min trades within seconds.
+
+```bash
+# Copy single wallet
+uv run python copybot.py --paper --wallets 0x1d00...
+
+# Copy multiple wallets
+uv run python copybot.py --paper --wallets 0x1d00...,0x5678...
+
+# Custom settings
+uv run python copybot.py --paper --amount 10 --poll 3 --wallets 0x1d00...
+```
+
+**Finding wallets to copy:**
 1. Go to [Polymarket Leaderboard](https://polymarket.com/leaderboard)
 2. Filter by "Crypto" category
-3. Find traders with consistent P&L
-4. Copy their wallet address from their profile URL
+3. Find traders with consistent BTC 5-min P&L
+4. Copy wallet address from profile URL
 
-Example profitable BTC trader:
+### Streak Reversal (`bot.py`)
+
+Bets against streaks of consecutive outcomes. After N ups in a row, bet down (and vice versa).
+
+```bash
+# Trigger on 4-streak (default)
+uv run python bot.py --paper
+
+# Trigger on 5-streak (more conservative)
+uv run python bot.py --paper --trigger 5
+
+# Custom bet amount
+uv run python bot.py --paper --amount 10
 ```
-https://polymarket.com/@0x1d0034134e339a309700ff2d34e99fa2d48b031
-Wallet: 0x1d0034134e339a309700ff2d34e99fa2d48b0313
+
+## Realistic Paper Trading
+
+Paper trading simulates real costs from Polymarket CLOB API:
+
+| Cost | Source | Example |
+|------|--------|---------|
+| **Fees** | `clob.polymarket.com/fee-rate` | ~2.5% at 50¢ price |
+| **Spread** | Real bid-ask from orderbook | ~1¢ typical |
+| **Slippage** | Orderbook walking | Depends on size |
+| **Copy Delay** | Time since trader's entry | ~0.3%/second |
+
+All costs are deducted from your simulated bankroll, so paper P&L reflects realistic expectations.
+
+## Trade History
+
+Full trade history is recorded with fees, slippage, timestamps, and outcomes.
+
+```bash
+# View statistics
+uv run python history.py --stats
+
+# Show last 50 trades
+uv run python history.py --limit 50
+
+# Show all trades
+uv run python history.py --all
+
+# Export to CSV/JSON
+uv run python history.py --export csv
+uv run python history.py --export json
 ```
-
-## Live Trading Setup
-
-1. Get a Polygon wallet with USDC
-2. Set your private key in `.env`:
-   ```
-   PRIVATE_KEY=0x_your_key
-   PAPER_TRADE=false
-   COPY_WALLETS=0x1d0034134e339a309700ff2d34e99fa2d48b0313
-   ```
-3. Run: `uv run python copybot.py`
 
 ## Configuration
 
-Edit `.env` to tune:
+Create `.env` from template:
+
+```bash
+cp .env.example .env
+```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `COPY_WALLETS` | (empty) | Comma-separated wallet addresses to copy |
-| `COPY_POLL_INTERVAL` | 5 | Seconds between activity checks |
-| `BET_AMOUNT` | 5 | USD per copied trade |
-| `MIN_BET` | 1 | Minimum bet size |
-| `MAX_DAILY_BETS` | 50 | Stop after N bets per day |
-| `MAX_DAILY_LOSS` | 50 | Stop if daily loss exceeds this |
-| `PAPER_TRADE` | true | Set false for live trading |
+| `PAPER_TRADE` | `true` | Set `false` for live trading |
+| `BET_AMOUNT` | `5` | USD per trade |
+| `MIN_BET` | `1` | Minimum bet size |
+| `MAX_DAILY_BETS` | `50` | Stop after N bets/day |
+| `MAX_DAILY_LOSS` | `50` | Stop if daily loss exceeds |
+| `STREAK_TRIGGER` | `4` | Streak length to trigger (bot.py) |
+| `ENTRY_SECONDS_BEFORE` | `30` | Seconds before window to enter |
+| `COPY_WALLETS` | (empty) | Comma-separated wallets to copy |
+| `COPY_POLL_INTERVAL` | `5` | Seconds between activity checks |
+| `TIMEZONE` | `Asia/Jakarta` | Display timezone |
+| `PRIVATE_KEY` | (empty) | Polygon wallet key (live only) |
+
+## Live Trading
+
+1. Get a Polygon wallet with USDC
+2. Configure `.env`:
+   ```
+   PRIVATE_KEY=0x_your_private_key
+   PAPER_TRADE=false
+   COPY_WALLETS=0x1d0034134e339a309700ff2d34e99fa2d48b0313
+   ```
+3. Run:
+   ```bash
+   uv run python copybot.py --live
+   # or
+   uv run python bot.py --live
+   ```
+
+## CLI Reference
+
+All bots have comprehensive `--help`:
+
+```bash
+uv run python copybot.py --help
+uv run python bot.py --help
+uv run python history.py --help
+```
+
+**Common flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--paper` | Force paper trading mode |
+| `--live` | Force live trading mode |
+| `--amount USD` | Bet amount per trade |
+| `--bankroll USD` | Override starting bankroll |
+| `--max-bets N` | Daily bet limit |
+| `--max-loss USD` | Daily loss limit |
+
+**Copybot-specific:**
+
+| Flag | Description |
+|------|-------------|
+| `--wallets ADDR` | Comma-separated wallet addresses |
+| `--poll SEC` | Poll interval in seconds |
+
+**Bot-specific:**
+
+| Flag | Description |
+|------|-------------|
+| `--trigger N` | Streak length to trigger bet |
 
 ## Architecture
 
 ```
-├── copybot.py      — Main loop: monitors wallets, copies BTC 5-min trades
-├── copytrade.py    — Wallet activity monitoring + signal generation
-├── bot.py          — Original streak reversal strategy
-├── polymarket.py   — Polymarket API client (Gamma + CLOB)
-├── strategy.py     — Streak detection + Kelly criterion sizing
-├── trader.py       — Paper & live order execution + state management
+├── copybot.py      — Copytrade main loop
+├── copytrade.py    — Wallet monitoring + signal generation
+├── bot.py          — Streak reversal main loop
+├── strategy.py     — Streak detection + Kelly sizing
+├── polymarket.py   — API client (Gamma + CLOB)
+├── trader.py       — Paper/live execution + state
+├── history.py      — Trade history CLI
 ├── config.py       — Settings from .env
-└── .env.example    — Template config
+└── backtest.py     — Offline backtesting
 ```
 
-## How It Works
-
-1. **Monitor** — Polls `/activity` endpoint for each tracked wallet
-2. **Filter** — Only processes BTC 5-min trades (`btc-updown-5m-*`)
-3. **Detect** — Compares timestamps to find new trades
-4. **Copy** — Places same direction bet (Up/Down) on same market
-5. **Settle** — Tracks outcome when market resolves, updates bankroll
-
-## API Endpoints Used
+## API Endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
-| `data-api.polymarket.com/activity?user={wallet}` | Get trader's recent trades |
-| `gamma-api.polymarket.com/markets/slug/{slug}` | Get market details + outcome |
-| `clob.polymarket.com` | Place orders (live trading) |
+| `data-api.polymarket.com/activity` | Wallet trade activity |
+| `gamma-api.polymarket.com/markets` | Market discovery + outcomes |
+| `clob.polymarket.com/book` | Orderbook + prices |
+| `clob.polymarket.com/fee-rate` | Fee rates |
 
 ## Risk Management
 
-With a small bankroll ($10-50), use conservative sizing:
+The bot enforces:
+- Minimum bet size ($5 on Polymarket)
+- Max 10% of bankroll per trade
+- Daily loss limit stops trading
+- Daily bet count limit
+
+**Recommended sizing:**
 
 | Bankroll | Bet Size | Risk % |
 |----------|----------|--------|
-| $10 | $1 | 10% |
 | $50 | $2-5 | 4-10% |
-| $100+ | $5-10 | 5-10% |
-
-The bot enforces:
-- `MIN_BET` floor (default $1)
-- Max 10% of bankroll per trade
-- Daily loss limit stops trading
+| $100 | $5-10 | 5-10% |
+| $500+ | $10-25 | 2-5% |
 
 ## License
 

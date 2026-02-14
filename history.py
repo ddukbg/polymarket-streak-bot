@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""
+Trade History Viewer
+
+View, export, and analyze your trading history.
+
+Usage:
+    python history.py                  # Show last 20 trades
+    python history.py --all            # Show all trades
+    python history.py --limit 50       # Show last 50 trades
+    python history.py --stats          # Show statistics only
+    python history.py --export json    # Export to trade_history.json
+    python history.py --export csv     # Export to trade_history.csv
+"""
+
+import argparse
+from config import TIMEZONE_NAME
+from trader import TradingState
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Trade History Viewer")
+    parser.add_argument("--all", action="store_true", help="Show all trades")
+    parser.add_argument("--limit", type=int, default=20, help="Number of trades to show")
+    parser.add_argument("--stats", action="store_true", help="Show statistics only")
+    parser.add_argument("--export", choices=["json", "csv"], help="Export history to file")
+    parser.add_argument("--output", type=str, help="Output file path for export")
+    parser.add_argument("--recent", action="store_true", help="Only show recent trades (from working state)")
+    args = parser.parse_args()
+
+    # Load full history by default, or recent only if requested
+    if args.recent:
+        state = TradingState.load()
+        print("(Showing recent trades from working state)")
+    else:
+        state = TradingState.load_full_history()
+        print(f"(Loaded full history: {len(state.trades)} trades)")
+
+    if not state.trades:
+        print("No trade history found. Run the bot first to generate trades.")
+        return
+
+    # Export if requested
+    if args.export:
+        if args.export == "json":
+            filepath = args.output or "trade_history.json"
+            state.export_history_json(filepath)
+        else:
+            filepath = args.output or "trade_history.csv"
+            state.export_history_csv(filepath)
+        return
+
+    # Show statistics
+    if args.stats:
+        stats = state.get_statistics()
+        print("\n" + "=" * 60)
+        print(f"TRADING STATISTICS ({TIMEZONE_NAME})")
+        print("=" * 60)
+        print(f"\nTrades:")
+        print(f"  Total:    {stats['total_trades']}")
+        print(f"  Settled:  {stats['settled_trades']}")
+        print(f"  Pending:  {stats['pending_trades']}")
+        print(f"  Wins:     {stats['wins']}")
+        print(f"  Losses:   {stats['losses']}")
+        print(f"  Win Rate: {stats['win_rate']:.1f}%")
+
+        print(f"\nProfit & Loss:")
+        print(f"  Total P&L:       ${stats['total_pnl']:+.2f}")
+        print(f"  Gross Profit:    ${stats['total_gross_profit']:+.2f}")
+        print(f"  Fees Paid:       ${stats['total_fees_paid']:.2f}")
+        print(f"  Avg Win:         ${stats['avg_win']:+.2f}")
+        print(f"  Avg Loss:        ${stats['avg_loss']:+.2f}")
+        print(f"  Largest Win:     ${stats['largest_win']:+.2f}")
+        print(f"  Largest Loss:    ${stats['largest_loss']:+.2f}")
+
+        print(f"\nCosts (Averages):")
+        print(f"  Fee:             {stats['avg_fee_pct']:.2f}%")
+        print(f"  Slippage:        {stats['avg_slippage_pct']:.2f}%")
+        print(f"  Delay Impact:    {stats['avg_delay_impact_pct']:.2f}%")
+
+        print(f"\nBankroll: ${stats['bankroll']:.2f}")
+        print("=" * 60 + "\n")
+        return
+
+    # Show trade history
+    limit = len(state.trades) if args.all else args.limit
+    state.print_history(limit=limit)
+
+
+if __name__ == "__main__":
+    main()
