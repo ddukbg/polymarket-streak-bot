@@ -166,7 +166,7 @@ def main():
                 bet_amount,
                 state.bankroll * 0.1,  # never risk more than 10% of bankroll
             )
-            amount = max(5, amount)  # Polymarket minimum
+            amount = max(Config.MIN_BET, amount)
 
             # === PLACE BET ===
             log(f"🎯 Signal: {sig.reason}")

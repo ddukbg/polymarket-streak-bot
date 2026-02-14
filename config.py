@@ -16,6 +16,7 @@ class Config:
     # Strategy
     STREAK_TRIGGER: int = int(os.getenv("STREAK_TRIGGER", "4"))
     BET_AMOUNT: float = float(os.getenv("BET_AMOUNT", "5"))
+    MIN_BET: float = float(os.getenv("MIN_BET", "1"))
     MAX_DAILY_BETS: int = int(os.getenv("MAX_DAILY_BETS", "50"))
     MAX_DAILY_LOSS: float = float(os.getenv("MAX_DAILY_LOSS", "50"))
 
@@ -28,3 +29,10 @@ class Config:
     # Logging
     LOG_FILE: str = "bot.log"
     TRADES_FILE: str = "trades.json"
+
+    # Copytrade
+    DATA_API = "https://data-api.polymarket.com"
+    COPY_WALLETS: list[str] = [
+        w.strip() for w in os.getenv("COPY_WALLETS", "").split(",") if w.strip()
+    ]
+    COPY_POLL_INTERVAL: int = int(os.getenv("COPY_POLL_INTERVAL", "5"))

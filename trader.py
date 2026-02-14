@@ -14,17 +14,34 @@ from polymarket import Market
 class Trade:
     """Record of a trade (paper or live)."""
 
-    timestamp: int
+    # Core fields
+    timestamp: int  # market timestamp
     market_slug: str
     direction: str  # "up" or "down"
-    amount: float
-    entry_price: float
-    streak_length: int
+    amount: float  # your bet size in USD
+    entry_price: float  # price when you entered
+    streak_length: int  # for streak strategy
     confidence: float
     paper: bool
-    outcome: str | None = None  # filled after resolution
+
+    # Resolution fields
+    outcome: str | None = None  # filled after resolution ("up" or "down")
     pnl: float = 0.0
     order_id: str | None = None
+
+    # Copytrade fields (for analysis)
+    copied_from: str | None = None  # trader wallet address
+    trader_name: str | None = None  # trader pseudonym
+    trader_direction: str | None = None  # what trader bet on
+    trader_amount: float | None = None  # how much trader bet (USD)
+    trader_price: float | None = None  # price trader got
+    trader_timestamp: int | None = None  # when trader placed bet
+    executed_at: int | None = None  # when you placed your bet (unix timestamp)
+    copy_delay_ms: int | None = None  # milliseconds between trader's trade and yours
+    market_price_at_copy: float | None = None  # market price when you copied
+
+    # Strategy type
+    strategy: str = "streak"  # "streak" or "copytrade"
 
 
 @dataclass
@@ -104,8 +121,18 @@ class TradingState:
 class PaperTrader:
     """Paper trading — logs trades without executing."""
 
-    def place_bet(self, market: Market, direction: str, amount: float, confidence: float, streak_length: int) -> Trade:
+    def place_bet(
+        self,
+        market: Market,
+        direction: str,
+        amount: float,
+        confidence: float,
+        streak_length: int,
+        **kwargs,  # copytrade fields
+    ) -> Trade:
         entry_price = market.up_price if direction == "up" else market.down_price
+        executed_at = int(time.time() * 1000)  # milliseconds
+
         trade = Trade(
             timestamp=market.timestamp,
             market_slug=market.slug,
@@ -115,11 +142,25 @@ class PaperTrader:
             streak_length=streak_length,
             confidence=confidence,
             paper=True,
+            executed_at=executed_at,
+            market_price_at_copy=entry_price,
+            **kwargs,  # pass copytrade fields
         )
-        print(
-            f"[PAPER] 📝 Bet ${amount:.2f} on {direction.upper()} @ {trade.entry_price:.2f} "
-            f"| {market.title} | streak={streak_length} conf={confidence:.1%}"
-        )
+
+        # Log based on strategy type
+        if kwargs.get("strategy") == "copytrade":
+            trader = kwargs.get("trader_name", "unknown")
+            trader_amt = kwargs.get("trader_amount", 0)
+            delay = kwargs.get("copy_delay_ms", 0)
+            print(
+                f"[PAPER] Copied {trader}: ${amount:.2f} on {direction.upper()} @ {trade.entry_price:.2f} "
+                f"| Trader bet ${trader_amt:.2f} | Delay: {delay}ms"
+            )
+        else:
+            print(
+                f"[PAPER] Bet ${amount:.2f} on {direction.upper()} @ {trade.entry_price:.2f} "
+                f"| {market.title} | streak={streak_length} conf={confidence:.1%}"
+            )
         return trade
 
 
@@ -152,7 +193,15 @@ class LiveTrader:
         except Exception as e:
             raise RuntimeError(f"Failed to init trading client: {e}")
 
-    def place_bet(self, market: Market, direction: str, amount: float, confidence: float, streak_length: int) -> Trade:
+    def place_bet(
+        self,
+        market: Market,
+        direction: str,
+        amount: float,
+        confidence: float,
+        streak_length: int,
+        **kwargs,  # copytrade fields
+    ) -> Trade:
         token_id = market.up_token_id if direction == "up" else market.down_token_id
         if not token_id:
             raise ValueError(f"No token ID for {direction} side")
@@ -160,6 +209,8 @@ class LiveTrader:
         entry_price = market.up_price if direction == "up" else market.down_price
         if entry_price <= 0:
             entry_price = 0.5
+
+        executed_at = int(time.time() * 1000)  # milliseconds
 
         # Calculate size (number of shares)
         size = round(amount / entry_price, 2)
@@ -174,12 +225,21 @@ class LiveTrader:
                 )
             )
             order_id = order.get("orderID", order.get("id", "unknown"))
-            print(
-                f"[LIVE] 🔥 Bet ${amount:.2f} on {direction.upper()} @ {entry_price:.2f} "
-                f"| {market.title} | order={order_id}"
-            )
+
+            # Log based on strategy type
+            if kwargs.get("strategy") == "copytrade":
+                trader = kwargs.get("trader_name", "unknown")
+                print(
+                    f"[LIVE] Copied {trader}: ${amount:.2f} on {direction.upper()} @ {entry_price:.2f} "
+                    f"| order={order_id}"
+                )
+            else:
+                print(
+                    f"[LIVE] Bet ${amount:.2f} on {direction.upper()} @ {entry_price:.2f} "
+                    f"| {market.title} | order={order_id}"
+                )
         except Exception as e:
-            print(f"[LIVE] ❌ Order failed: {e}")
+            print(f"[LIVE] Order failed: {e}")
             order_id = f"FAILED:{e}"
 
         return Trade(
@@ -192,4 +252,7 @@ class LiveTrader:
             confidence=confidence,
             paper=False,
             order_id=order_id,
+            executed_at=executed_at,
+            market_price_at_copy=entry_price,
+            **kwargs,  # pass copytrade fields
         )

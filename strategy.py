@@ -111,4 +111,4 @@ def kelly_size(confidence: float, odds: float, bankroll: float, fraction: float 
     if kelly <= 0:
         return 0
 
-    return max(5, round(bankroll * kelly * fraction, 2))  # min $5 (Polymarket minimum)
+    return max(1, round(bankroll * kelly * fraction, 2))
