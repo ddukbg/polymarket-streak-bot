@@ -432,8 +432,6 @@ class TradingState:
 class PaperTrader:
     """Paper trading — logs trades without executing, with realistic simulation."""
 
-    MIN_ORDER_SIZE = 5.0  # Polymarket minimum order size in USD
-
     def __init__(self):
         # Import here to avoid circular import
         from polymarket import PolymarketClient
@@ -454,9 +452,9 @@ class PaperTrader:
         Returns None if order is rejected (e.g., below minimum size).
         """
         # Validate minimum order size
-        if amount < self.MIN_ORDER_SIZE:
+        if amount < Config.MIN_BET:
             print(
-                f"[PAPER] ❌ Order rejected: ${amount:.2f} below minimum ${self.MIN_ORDER_SIZE:.2f}"
+                f"[PAPER] ❌ Order rejected: ${amount:.2f} below minimum ${Config.MIN_BET:.2f}"
             )
             return None
 
