@@ -103,10 +103,7 @@ class Trade:
     price_ratio: float | None = None  # our_price / opposite_price
     market_bias: str | None = None  # "bullish" (up>down), "bearish", or "neutral"
 
-    # Trader analysis (for copytrade)
-    trader_recent_trades: int | None = None  # How many recent trades from this trader
-    trader_recent_wins: int | None = None  # Wins in recent trades
-    trader_win_rate: float | None = None  # Trader's observed win rate
+    # Trader analysis (for copytrade) - reserved for future use
 
     # Resolution timing
     window_close_time: int | None = None  # When the 5-min window closes (unix)
@@ -116,6 +113,22 @@ class Trade:
     # Outcome analysis
     price_at_close: float | None = None  # Our direction's price when window closed
     final_price: float | None = None  # Our direction's price after resolution (0 or 1)
+
+    # On-chain data (from Polygonscan)
+    block_number: int | None = None
+    gas_used: int | None = None
+    tx_fee_matic: float | None = None
+    on_chain_timestamp: int | None = None
+
+    # Delay model breakdown (for analysis)
+    delay_model_breakdown: dict | None = None
+
+    # Fields that are only valid during pending state and should not be persisted to JSON
+    TRANSIENT_FIELDS = {"current_price", "unrealized_pnl", "implied_outcome"}
+
+    def to_json_dict(self) -> dict:
+        """Convert to dict for JSON, excluding transient fields."""
+        return {k: v for k, v in asdict(self).items() if k not in self.TRANSIENT_FIELDS}
 
     def to_history_dict(self) -> dict:
         """Convert trade to a detailed history dictionary."""
@@ -228,15 +241,17 @@ class TradingState:
         trade.won = trade.direction == outcome
         trade.settled_at = int(time.time() * 1000)
 
-        # Resolution timing - how long after window close did it resolve?
+        # Resolution timing
+        resolution_time = int(time.time())
+        trade.resolution_time = resolution_time
         if trade.window_close_time:
-            resolution_time = int(time.time())
-            trade.resolution_time = resolution_time
             trade.resolution_delay_seconds = resolution_time - trade.window_close_time
 
-        # Final prices at resolution
+        # Final price is always deterministic: 1.0 if won, 0.0 if lost
+        trade.final_price = 1.0 if trade.won else 0.0
+
+        # Price at close from market data if available
         if market:
-            trade.final_price = 1.0 if trade.won else 0.0
             if trade.direction == "up":
                 trade.price_at_close = market.up_price
             else:
@@ -315,9 +330,9 @@ class TradingState:
             except (json.JSONDecodeError, Exception):
                 existing = []
 
-        # Append new trades
+        # Append new trades (excluding transient fields)
         for t in new_trades:
-            existing.append(asdict(t))
+            existing.append(t.to_json_dict())
 
         # Save full history
         with open(history_file, "w") as f:
@@ -774,6 +789,7 @@ class PaperTrader:
         slippage_pct = 0.0
         fill_pct = 100.0
         delay_impact_pct = 0.0
+        delay_breakdown = None
         execution_price = entry_price if entry_price > 0 else 0.5
         best_bid = 0.0
         best_ask = 0.0
@@ -807,14 +823,15 @@ class PaperTrader:
                         best_ask = min(float(a["price"]) for a in asks)
 
                 # Get execution price with slippage and copy delay impact
+                delay_breakdown = None
                 if self._market_cache:
-                    exec_price, spread, slippage_pct, fill_pct, delay_impact_pct = (
+                    exec_price, spread, slippage_pct, fill_pct, delay_impact_pct, delay_breakdown = (
                         self._market_cache.get_execution_price(
                             token_id, "BUY", amount, copy_delay_ms
                         )
                     )
                 else:
-                    exec_price, spread, slippage_pct, fill_pct, delay_impact_pct = (
+                    exec_price, spread, slippage_pct, fill_pct, delay_impact_pct, delay_breakdown = (
                         self._client.get_execution_price(
                             token_id, "BUY", amount, copy_delay_ms
                         )
@@ -900,6 +917,8 @@ class PaperTrader:
             opposite_price=opposite_price,
             price_ratio=price_ratio,
             market_bias=market_bias,
+            # Delay model breakdown for analysis
+            delay_model_breakdown=delay_breakdown,
             **kwargs,  # pass copytrade fields
         )
 

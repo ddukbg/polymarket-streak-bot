@@ -13,13 +13,86 @@ Usage:
     python history.py --export csv     # Export to trade_history.csv
     python history.py --backfill       # Backfill settlement data for unsettled trades
     python history.py --backfill --watch  # Keep retrying until all settled (every 5 min)
+    python history.py --compact        # Migrate history: remove dead fields, backfill final_price
 """
 
 import argparse
+import json
+import os
 import time
 from datetime import datetime
 from config import TIMEZONE_NAME
-from trader import TradingState
+from trader import Trade, TradingState
+
+
+# Fields that were declared but never populated (dead code)
+DEAD_CODE_FIELDS = {
+    "trader_recent_trades",
+    "trader_recent_wins",
+    "trader_win_rate",
+    "actual_price_impact_pct",
+    "gas_price_gwei",
+    "tx_status",
+}
+
+# Fields that are only valid during pending state
+TRANSIENT_FIELDS = {"current_price", "unrealized_pnl", "implied_outcome"}
+
+
+def compact_history():
+    """Migrate trade history: remove dead fields, transient fields, and backfill final_price."""
+    history_file = "trade_history_full.json"
+
+    if not os.path.exists(history_file):
+        print(f"[compact] No history file found: {history_file}")
+        return
+
+    # Load history
+    try:
+        with open(history_file) as f:
+            history = json.load(f)
+    except Exception as e:
+        print(f"[compact] Error loading history: {e}")
+        return
+
+    if not history:
+        print("[compact] History file is empty")
+        return
+
+    print(f"[compact] Processing {len(history)} trades...")
+
+    dead_removed = 0
+    transient_removed = 0
+    final_price_backfilled = 0
+
+    for entry in history:
+        # Remove dead code fields
+        for field in DEAD_CODE_FIELDS:
+            if field in entry:
+                del entry[field]
+                dead_removed += 1
+
+        # Remove transient fields from settled trades
+        if entry.get("outcome") is not None:
+            for field in TRANSIENT_FIELDS:
+                if field in entry:
+                    del entry[field]
+                    transient_removed += 1
+
+        # Backfill final_price for settled trades where won is known
+        if entry.get("won") is not None and entry.get("final_price") is None:
+            entry["final_price"] = 1.0 if entry["won"] else 0.0
+            final_price_backfilled += 1
+
+    # Save compacted history
+    with open(history_file, "w") as f:
+        json.dump(history, f, indent=2)
+
+    print(f"[compact] Done!")
+    print(f"  - Removed {dead_removed} dead code field instances")
+    print(f"  - Removed {transient_removed} transient field instances")
+    print(f"  - Backfilled final_price for {final_price_backfilled} trades")
+    print(f"  - Saved to {history_file}")
 
 
 def main():
@@ -33,6 +106,7 @@ def main():
     parser.add_argument("--backfill", action="store_true", help="Backfill settlement data for unsettled trades")
     parser.add_argument("--watch", action="store_true", help="Keep retrying backfill every 5 min until all settled")
     parser.add_argument("--interval", type=int, default=300, help="Retry interval in seconds (default: 300)")
+    parser.add_argument("--compact", action="store_true", help="Migrate history: remove dead/transient fields, backfill final_price")
     args = parser.parse_args()
 
     # Backfill settlement data if requested
@@ -67,6 +141,11 @@ def main():
                 print("\nStopped watching.")
                 break
 
+        return
+
+    # Compact migration
+    if args.compact:
+        compact_history()
         return
 
     # Load full history by default, or recent only if requested

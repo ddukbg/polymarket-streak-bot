@@ -51,7 +51,7 @@ uv run python copybot_v2.py --paper --no-websocket --wallets 0x1d00...
 | Order type | Market (FOK) for guaranteed fills |
 | Resilience | Circuit breaker + rate limiting |
 | Logging | Colorful structured logs |
-| Pattern data | 54 fields saved for analysis |
+| Pattern data | ~45 fields saved for analysis |
 
 ## Realistic Paper Trading
 
@@ -160,11 +160,12 @@ uv run python history.py --stats      # View statistics
 uv run python history.py --limit 50   # Last 50 trades
 uv run python history.py --all        # All trades
 uv run python history.py --export csv # Export to CSV
+uv run python history.py --compact    # Migrate: remove unused fields
 ```
 
 ### Pattern Analysis Data
 
-All trades saved to `trade_history_full.json` with 54 fields:
+All trades saved to `trade_history_full.json` with ~45 fields:
 
 | Category | Fields | Use Case |
 |----------|--------|----------|
