@@ -26,9 +26,10 @@ from config import Config, LOCAL_TZ, TIMEZONE_NAME
 from copytrade import CopySignal
 from copytrade_ws import HybridCopytradeMonitor
 from logging_config import get_logger, StructuredLogger
-from polymarket import PolymarketClient
+from polymarket import PolymarketClient, DelayImpactModel
 from polymarket_ws import MarketDataCache, TradeEvent
 from resilience import CircuitBreaker, RateLimiter, HealthCheck, CircuitOpenError, categorize_error, ErrorCategory
+from selective_filter import SelectiveFilter
 from trader import LiveTrader, PaperTrader, TradingState
 
 # Pattern for BTC 5-min markets
@@ -42,6 +43,102 @@ def handle_signal(sig, frame):
     global running
     log.info("shutdown_requested", signal=sig)
     running = False
+
+
+def estimate_execution_from_book(book: dict, side: str, amount_usd: float, copy_delay_ms: int = 0):
+    """Estimate execution details from a pre-fetched orderbook snapshot."""
+    bids = book.get("bids", []) if book else []
+    asks = book.get("asks", []) if book else []
+
+    if not bids or not asks:
+        return {
+            "execution_price": 0.5,
+            "spread": 0.0,
+            "slippage_pct": 0.0,
+            "fill_pct": 100.0,
+            "delay_impact_pct": 0.0,
+            "delay_breakdown": None,
+            "best_bid": 0.0,
+            "best_ask": 0.0,
+            "depth_at_best": 0.0,
+        }
+
+    asks_sorted = sorted(asks, key=lambda x: float(x["price"]))
+    bids_sorted = sorted(bids, key=lambda x: float(x["price"]), reverse=True)
+
+    best_ask = float(asks_sorted[0]["price"])
+    best_bid = float(bids_sorted[0]["price"])
+    spread = best_ask - best_bid
+
+    levels = asks_sorted if side == "BUY" else bids_sorted
+    best_level = levels[0]
+    depth_at_best = float(best_level["price"]) * float(best_level["size"])
+
+    remaining_usd = amount_usd
+    total_shares = 0.0
+    total_cost = 0.0
+
+    for level in levels:
+        price = float(level["price"])
+        size = float(level["size"])
+        level_value = price * size
+        if remaining_usd <= 0:
+            break
+        if level_value >= remaining_usd:
+            shares_to_take = remaining_usd / price
+            total_shares += shares_to_take
+            total_cost += remaining_usd
+            remaining_usd = 0
+        else:
+            total_shares += size
+            total_cost += level_value
+            remaining_usd -= level_value
+
+    filled_amount = amount_usd - remaining_usd
+    fill_pct = (filled_amount / amount_usd * 100) if amount_usd > 0 else 100.0
+
+    if total_shares <= 0:
+        execution_price = (best_ask + best_bid) / 2
+        slippage_pct = 0.0
+    else:
+        execution_price = total_cost / total_shares
+        ref_price = best_ask if side == "BUY" else best_bid
+        if ref_price > 0:
+            if side == "BUY":
+                slippage_pct = (execution_price - ref_price) / ref_price * 100
+            else:
+                slippage_pct = (ref_price - execution_price) / ref_price * 100
+        else:
+            slippage_pct = 0.0
+
+    delay_impact_pct = 0.0
+    delay_breakdown = None
+    if copy_delay_ms > 0:
+        delay_model = DelayImpactModel()
+        delay_impact_pct, delay_breakdown = delay_model.calculate_impact(
+            delay_ms=copy_delay_ms,
+            order_size=amount_usd,
+            depth_at_best=depth_at_best,
+            spread=spread,
+            side=side,
+        )
+        if side == "BUY":
+            execution_price *= (1 + delay_impact_pct / 100)
+        else:
+            execution_price *= (1 - delay_impact_pct / 100)
+        execution_price = max(0.01, min(0.99, execution_price))
+
+    return {
+        "execution_price": execution_price,
+        "spread": spread,
+        "slippage_pct": max(0.0, slippage_pct),
+        "fill_pct": fill_pct,
+        "delay_impact_pct": delay_impact_pct,
+        "delay_breakdown": delay_breakdown,
+        "best_bid": best_bid,
+        "best_ask": best_ask,
+        "depth_at_best": depth_at_best,
+    }
 
 
 def main():
@@ -140,6 +237,22 @@ Examples:
         "--retry", type=int, metavar="N", default=0,
         help="Retry N times on bankrupt (resets bankroll each retry)"
     )
+    parser.add_argument(
+        "--selective", action="store_true",
+        help=f"Enable selective trade filter (default: {Config.SELECTIVE_FILTER})"
+    )
+    parser.add_argument(
+        "--max-delay", type=float, metavar="SEC",
+        help=f"Selective filter max copy delay in seconds (default: {Config.SELECTIVE_MAX_DELAY_MS / 1000:.1f})"
+    )
+    parser.add_argument(
+        "--min-fill", type=float, metavar="PRICE",
+        help=f"Selective filter minimum fill price (default: {Config.SELECTIVE_MIN_FILL_PRICE})"
+    )
+    parser.add_argument(
+        "--max-fill", type=float, metavar="PRICE",
+        help=f"Selective filter maximum fill price (default: {Config.SELECTIVE_MAX_FILL_PRICE})"
+    )
     # Internal: tracks current retry attempt (for subprocess restarts)
     parser.add_argument("--_retry_count", type=int, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -155,6 +268,16 @@ Examples:
     bet_amount = args.amount or Config.BET_AMOUNT
     poll_interval = args.poll or Config.FAST_POLL_INTERVAL
     use_websocket = Config.USE_WEBSOCKET and not args.no_websocket
+
+    selective_enabled = Config.SELECTIVE_FILTER or args.selective
+    selective_overrides = {}
+    if args.max_delay is not None:
+        selective_overrides["max_delay_ms"] = int(args.max_delay * 1000)
+    if args.min_fill is not None:
+        selective_overrides["min_fill_price"] = args.min_fill
+    if args.max_fill is not None:
+        selective_overrides["max_fill_price"] = args.max_fill
+    selective_filter = SelectiveFilter(config=selective_overrides) if selective_enabled else None
 
     # Parse wallets
     wallets = Config.COPY_WALLETS
@@ -256,6 +379,10 @@ Examples:
     ws_str = "✓" if use_websocket else "✗"
     log.status_line(f"═══ Copybot v2 ({mode_str}) ═══")
     log.status_line(f"Amount: ${bet_amount:.2f} | Bankroll: ${state.bankroll:.2f} | Poll: {poll_interval}s | WS: {ws_str}")
+    if selective_enabled:
+        log.status_line(
+            f"Selective: ON | delay<={selective_filter.max_delay_ms/1000:.1f}s | fill={selective_filter.min_fill_price:.2f}-{selective_filter.max_fill_price:.2f}"
+        )
     log.status_line(f"Tracking {len(wallets)} wallet(s)")
     for w in wallets:
         log.status_line(f"  └─ {w[:10]}...{w[-6:]}")
@@ -521,6 +648,53 @@ Examples:
                     our_amount=amount,
                 )
 
+                # Pre-query orderbook and estimate execution (shared by filter + trader)
+                token_id = market.up_token_id if direction == "up" else market.down_token_id
+                precomputed_execution = None
+                if token_id:
+                    try:
+                        if market_cache:
+                            book = market_cache.get_orderbook(token_id)
+                        else:
+                            book = client.get_orderbook(token_id)
+
+                        exec_est = estimate_execution_from_book(
+                            book=book,
+                            side="BUY",
+                            amount_usd=amount,
+                            copy_delay_ms=copy_delay_ms,
+                        )
+                        entry_price = market.up_price if direction == "up" else market.down_price
+                        price_movement_pct = 0.0
+                        if entry_price > 0:
+                            price_movement_pct = ((exec_est["execution_price"] - entry_price) / entry_price) * 100
+
+                        precomputed_execution = {
+                            **exec_est,
+                            "entry_price": entry_price,
+                            "price_movement_pct": price_movement_pct,
+                            "copy_delay_ms": copy_delay_ms,
+                        }
+                    except Exception as e:
+                        log.debug("precompute_execution_failed", error=str(e), market=market.slug)
+
+                if selective_enabled and selective_filter:
+                    execution_info = precomputed_execution or {
+                        "execution_price": market.up_price if direction == "up" else market.down_price,
+                        "spread": 0.0,
+                        "price_movement_pct": 0.0,
+                        "copy_delay_ms": copy_delay_ms,
+                        "depth_at_best": 0.0,
+                        "delay_breakdown": None,
+                    }
+                    should_trade, reason = selective_filter.should_trade(sig, market, execution_info)
+                    trade_label = f"{sig.trader_name} {direction.upper()} ${amount:.2f}"
+                    if not should_trade:
+                        log.status_line(f"[FILTER] ⏭️  SKIP: {reason} | {trade_label}")
+                        copied_markets.add(key)
+                        continue
+                    log.status_line(f"[FILTER] ✅ PASS: all checks OK | {trade_label}")
+
                 # === SESSION TRACKING FOR PATTERN ANALYSIS ===
                 session_trade_number = len(copied_markets) + 1
 
@@ -555,6 +729,7 @@ Examples:
                     trader_price=sig.price,
                     trader_timestamp=sig.trade_ts,
                     copy_delay_ms=copy_delay_ms,
+                    precomputed_execution=precomputed_execution,
                     # Session tracking
                     session_trade_number=session_trade_number,
                     session_wins_before=session_wins,

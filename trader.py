@@ -1135,13 +1135,25 @@ class PaperTrader:
 
         # Get copy delay if this is a copytrade
         copy_delay_ms = kwargs.get("copy_delay_ms", 0)
+        precomputed_execution = kwargs.pop("precomputed_execution", None)
 
         # Use fee rate from market data (already fetched from Gamma API)
         fee_rate_bps = market.taker_fee_bps if hasattr(market, 'taker_fee_bps') else 1000
         fee_pct = self._client.calculate_fee(execution_price, fee_rate_bps)
 
-        # Query orderbook for realistic simulation
-        if token_id:
+        # Query orderbook for realistic simulation (or use precomputed data)
+        if precomputed_execution:
+            execution_price = precomputed_execution.get("execution_price", execution_price)
+            spread = precomputed_execution.get("spread", spread)
+            slippage_pct = precomputed_execution.get("slippage_pct", slippage_pct)
+            fill_pct = precomputed_execution.get("fill_pct", fill_pct)
+            delay_impact_pct = precomputed_execution.get("delay_impact_pct", delay_impact_pct)
+            delay_breakdown = precomputed_execution.get("delay_breakdown")
+            best_bid = precomputed_execution.get("best_bid", best_bid)
+            best_ask = precomputed_execution.get("best_ask", best_ask)
+            if execution_price > 0:
+                fee_pct = self._client.calculate_fee(execution_price, fee_rate_bps)
+        elif token_id:
             try:
                 # Use market cache if available (faster, WebSocket-backed)
                 if self._market_cache:
@@ -1449,6 +1461,9 @@ class LiveTrader:
         if not is_valid:
             print(f"[LIVE] Order rejected: {error_msg}")
             return None
+
+        # Precomputed execution data is only used by paper mode; discard if passed
+        kwargs.pop("precomputed_execution", None)
 
         token_id = market.up_token_id if direction == "up" else market.down_token_id
         entry_price = market.up_price if direction == "up" else market.down_price
