@@ -656,6 +656,12 @@ Examples:
     if market_cache:
         market_cache.stop()
 
+    # Mark pending trades as force_exit before saving
+    if bankrupt:
+        state.mark_pending_as_force_exit("insufficient_bankroll")
+    else:
+        state.mark_pending_as_force_exit("shutdown")
+
     state.save()
 
     total = session_wins + session_losses

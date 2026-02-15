@@ -161,21 +161,36 @@ uv run python history.py --stats      # View statistics
 uv run python history.py --limit 50   # Last 50 trades
 uv run python history.py --all        # All trades
 uv run python history.py --export csv # Export to CSV
-uv run python history.py --compact    # Migrate: remove unused fields
 ```
 
 ### Pattern Analysis Data
 
-All trades saved to `trade_history_full.json` with ~45 fields:
+All trades saved to `trade_history_full.json` using a nested JSON structure:
 
-| Category | Fields | Use Case |
-|----------|--------|----------|
-| **Time Patterns** | `hour_utc`, `day_of_week`, `minute_of_hour`, `seconds_into_window` | Find best times to trade |
-| **Session Tracking** | `session_trade_number`, `session_wins_before`, `bankroll_before` | Track performance decay |
-| **Streaks** | `consecutive_wins`, `consecutive_losses` | Mean reversion patterns |
-| **Market Context** | `market_bias`, `price_ratio`, `opposite_price` | Entry quality analysis |
-| **Execution** | `spread`, `slippage_pct`, `delay_impact_pct`, `copy_delay_ms` | Cost analysis |
-| **Resolution** | `resolution_delay_seconds`, `price_at_close`, `final_price` | Market timing |
+```json
+{
+  "id": "1771102200_1771102454412_down",
+  "market": { "timestamp", "slug", "window_close", "volume" },
+  "position": { "direction", "amount", "requested_amount", "shares" },
+  "execution": { "timestamp", "entry_price", "fill_price", "spread", "slippage_pct", ... },
+  "fees": { "rate_bps", "pct", "amount" },
+  "copytrade": { "wallet", "name", "direction", "amount", "price", "delay_ms", ... },
+  "settlement": { "status", "outcome", "won", "timestamp", "net_profit", ... },
+  "context": { "strategy", "mode", "market_bias" },
+  "session": { "trade_number", "wins_before", "losses_before", "bankroll_before", ... },
+  "timing": { "hour_utc", "minute", "day_of_week", "seconds_into_window" },
+  "on_chain": { "block_number", "gas_used", "tx_fee_matic", "timestamp" }
+}
+```
+
+| Category | Nested Path | Use Case |
+|----------|-------------|----------|
+| **Time Patterns** | `timing.hour_utc`, `timing.day_of_week`, `timing.minute` | Find best times to trade |
+| **Session Tracking** | `session.trade_number`, `session.wins_before`, `session.bankroll_before` | Track performance decay |
+| **Streaks** | `session.consecutive_wins`, `session.consecutive_losses` | Mean reversion patterns |
+| **Market Context** | `context.market_bias`, `market.volume` | Entry quality analysis |
+| **Execution** | `execution.spread`, `execution.slippage_pct`, `copytrade.delay_ms` | Cost analysis |
+| **Settlement** | `settlement.status`, `settlement.won`, `settlement.net_profit` | P&L tracking |
 
 **Example analysis:**
 
@@ -188,15 +203,19 @@ with open("trade_history_full.json") as f:
 from collections import defaultdict
 hourly = defaultdict(lambda: {"wins": 0, "total": 0})
 for t in trades:
-    if t["won"] is not None:
-        hourly[t["hour_utc"]]["total"] += 1
-        if t["won"]:
-            hourly[t["hour_utc"]]["wins"] += 1
+    settlement = t.get("settlement", {})
+    timing = t.get("timing", {})
+    if settlement.get("won") is not None:
+        hourly[timing.get("hour_utc", 0)]["total"] += 1
+        if settlement["won"]:
+            hourly[timing.get("hour_utc", 0)]["wins"] += 1
 
 # Win rate after consecutive losses (mean reversion)
-after_losses = [t for t in trades if t["consecutive_losses"] >= 2 and t["won"] is not None]
+after_losses = [t for t in trades
+                if t.get("session", {}).get("consecutive_losses", 0) >= 2
+                and t.get("settlement", {}).get("won") is not None]
 if after_losses:
-    win_rate = sum(1 for t in after_losses if t["won"]) / len(after_losses)
+    win_rate = sum(1 for t in after_losses if t["settlement"]["won"]) / len(after_losses)
     print(f"Win rate after 2+ losses: {win_rate:.1%}")
 ```
 

@@ -123,12 +123,262 @@ class Trade:
     # Delay model breakdown (for analysis)
     delay_model_breakdown: dict | None = None
 
+    # Settlement status tracking
+    settlement_status: str = "pending"  # "pending", "settled", or "force_exit"
+    force_exit_reason: str | None = None  # "insufficient_bankroll" or "shutdown" (only when force_exit)
+
     # Fields that are only valid during pending state and should not be persisted to JSON
     TRANSIENT_FIELDS = {"current_price", "unrealized_pnl", "implied_outcome"}
 
     def to_json_dict(self) -> dict:
-        """Convert to dict for JSON, excluding transient fields."""
-        return {k: v for k, v in asdict(self).items() if k not in self.TRANSIENT_FIELDS}
+        """Convert to dict for JSON, using nested structure."""
+        return self.to_nested_json()
+
+    def to_nested_json(self) -> dict:
+        """Convert trade to nested JSON structure for clean, organized storage."""
+        # Generate unique trade ID
+        trade_id = f"{self.timestamp}_{self.executed_at}_{self.direction}"
+
+        # === MARKET ===
+        market = {
+            "timestamp": self.timestamp,
+            "slug": self.market_slug,
+            "window_close": self.window_close_time or (self.timestamp + 300),
+            "volume": self.market_volume,
+        }
+
+        # === POSITION ===
+        position = {
+            "direction": self.direction,
+            "amount": self.amount,
+            "requested_amount": self.requested_amount or self.amount,
+            "shares": self.shares_bought,
+        }
+
+        # === EXECUTION ===
+        execution = {
+            "timestamp": self.executed_at,
+            "entry_price": self.entry_price,
+            "fill_price": self.execution_price if self.execution_price > 0 else self.entry_price,
+            "spread": self.spread,
+            "slippage_pct": self.slippage_pct,
+            "fill_pct": self.fill_pct,
+            "best_bid": self.best_bid,
+            "best_ask": self.best_ask,
+            "price_movement_pct": self.price_movement_pct,
+        }
+
+        # === FEES ===
+        fees = {
+            "rate_bps": self.fee_rate_bps,
+            "pct": self.fee_pct,
+            "amount": self.fee_amount,
+        }
+
+        # === COPYTRADE (only if this is a copytrade) ===
+        copytrade = None
+        if self.strategy == "copytrade" and self.copied_from:
+            copytrade = {
+                "wallet": self.copied_from,
+                "name": self.trader_name,
+                "direction": self.trader_direction,
+                "amount": self.trader_amount,
+                "price": self.trader_price,
+                "timestamp": self.trader_timestamp,
+                "delay_ms": self.copy_delay_ms,
+                "delay_impact_pct": self.delay_impact_pct,
+                "delay_breakdown": self.delay_model_breakdown,
+            }
+
+        # === SETTLEMENT ===
+        settlement = {
+            "status": self.settlement_status,
+            "outcome": self.outcome,
+            "won": self.won,
+            "timestamp": self.settled_at,
+            "resolution_delay_sec": self.resolution_delay_seconds,
+            "price_at_close": self.price_at_close,
+            "gross_payout": self.gross_payout,
+            "gross_profit": self.gross_profit,
+            "fee_amount": self.fee_amount,
+            "net_profit": self.net_profit,
+        }
+        # Add force_exit_reason if applicable
+        if self.settlement_status == "force_exit":
+            settlement["force_exit_reason"] = self.force_exit_reason
+
+        # === CONTEXT ===
+        mode = "paper" if self.paper else "live"
+        context = {
+            "strategy": self.strategy,
+            "mode": mode,
+            "market_bias": self.market_bias or "neutral",
+        }
+
+        # === SESSION ===
+        session = {
+            "trade_number": self.session_trade_number or 1,
+            "wins_before": self.session_wins_before or 0,
+            "losses_before": self.session_losses_before or 0,
+            "pnl_before": self.session_pnl_before or 0.0,
+            "bankroll_before": self.bankroll_before or 0.0,
+            "consecutive_wins": self.consecutive_wins,
+            "consecutive_losses": self.consecutive_losses,
+        }
+
+        # === TIMING ===
+        timing = {
+            "hour_utc": self.hour_utc if self.hour_utc is not None else 0,
+            "minute": self.minute_of_hour if self.minute_of_hour is not None else 0,
+            "day_of_week": self.day_of_week if self.day_of_week is not None else 0,
+            "seconds_into_window": self.seconds_into_window if self.seconds_into_window is not None else 0,
+        }
+
+        # === ON-CHAIN (reserved for future live trading) ===
+        on_chain = {
+            "block_number": self.block_number,
+            "gas_used": self.gas_used,
+            "tx_fee_matic": self.tx_fee_matic,
+            "timestamp": self.on_chain_timestamp,
+        }
+
+        # Build final structure
+        result = {
+            "id": trade_id,
+            "market": market,
+            "position": position,
+            "execution": execution,
+            "fees": fees,
+        }
+
+        # Only include copytrade if present
+        if copytrade:
+            result["copytrade"] = copytrade
+
+        result["settlement"] = settlement
+        result["context"] = context
+        result["session"] = session
+        result["timing"] = timing
+        result["on_chain"] = on_chain
+
+        return result
+
+    @classmethod
+    def from_nested_json(cls, data: dict) -> "Trade":
+        """Create a Trade from nested JSON structure."""
+        market = data.get("market", {})
+        position = data.get("position", {})
+        execution = data.get("execution", {})
+        fees = data.get("fees", {})
+        copytrade = data.get("copytrade", {})
+        settlement = data.get("settlement", {})
+        context = data.get("context", {})
+        session = data.get("session", {})
+        timing = data.get("timing", {})
+        on_chain = data.get("on_chain", {})
+
+        return cls(
+            # Core fields from market/position
+            timestamp=market.get("timestamp", 0),
+            market_slug=market.get("slug", ""),
+            direction=position.get("direction", ""),
+            amount=position.get("amount", 0.0),
+            entry_price=execution.get("entry_price", 0.5),
+            streak_length=0,  # Not stored in nested format
+            confidence=0.6,  # Not stored in nested format
+            paper=context.get("mode", "paper") == "paper",
+
+            # Resolution fields from settlement
+            outcome=settlement.get("outcome"),
+            pnl=settlement.get("net_profit", 0.0),
+            order_id=None,  # Not stored in nested format for paper
+            settled_at=settlement.get("timestamp"),
+            won=settlement.get("won"),
+
+            # Settlement breakdown
+            shares_bought=position.get("shares", 0.0),
+            gross_payout=settlement.get("gross_payout", 0.0),
+            gross_profit=settlement.get("gross_profit", 0.0),
+            fee_amount=settlement.get("fee_amount", fees.get("amount", 0.0)),
+            net_profit=settlement.get("net_profit", 0.0),
+
+            # Copytrade fields
+            copied_from=copytrade.get("wallet") if copytrade else None,
+            trader_name=copytrade.get("name") if copytrade else None,
+            trader_direction=copytrade.get("direction") if copytrade else None,
+            trader_amount=copytrade.get("amount") if copytrade else None,
+            trader_price=copytrade.get("price") if copytrade else None,
+            trader_timestamp=copytrade.get("timestamp") if copytrade else None,
+            executed_at=execution.get("timestamp"),
+            copy_delay_ms=copytrade.get("delay_ms") if copytrade else None,
+            market_price_at_copy=execution.get("entry_price"),
+
+            # Strategy
+            strategy=context.get("strategy", "streak"),
+
+            # Simulation fields
+            fee_rate_bps=fees.get("rate_bps", 0),
+            fee_pct=fees.get("pct", 0.0),
+            spread=execution.get("spread", 0.0),
+            slippage_pct=execution.get("slippage_pct", 0.0),
+            execution_price=execution.get("fill_price", 0.0),
+            fill_pct=execution.get("fill_pct", 100.0),
+            delay_impact_pct=copytrade.get("delay_impact_pct", 0.0) if copytrade else 0.0,
+            requested_amount=position.get("requested_amount", position.get("amount", 0.0)),
+
+            # Price movement
+            price_at_signal=execution.get("entry_price", 0.0),
+            price_at_execution=execution.get("fill_price", 0.0),
+            price_movement_pct=execution.get("price_movement_pct", 0.0),
+
+            # Market context
+            market_volume=market.get("volume", 0.0),
+            best_bid=execution.get("best_bid", 0.0),
+            best_ask=execution.get("best_ask", 0.0),
+
+            # Order status -> settlement_status
+            order_status="pending",
+
+            # Pattern analysis fields
+            hour_utc=timing.get("hour_utc", 0),
+            minute_of_hour=timing.get("minute", 0),
+            day_of_week=timing.get("day_of_week", 0),
+            seconds_into_window=timing.get("seconds_into_window", 0),
+
+            # Session tracking
+            session_trade_number=session.get("trade_number", 1),
+            session_wins_before=session.get("wins_before", 0),
+            session_losses_before=session.get("losses_before", 0),
+            session_pnl_before=session.get("pnl_before", 0.0),
+            bankroll_before=session.get("bankroll_before", 0.0),
+            consecutive_wins=session.get("consecutive_wins", 0),
+            consecutive_losses=session.get("consecutive_losses", 0),
+
+            # Market context
+            opposite_price=None,
+            price_ratio=None,
+            market_bias=context.get("market_bias", "neutral"),
+
+            # Resolution timing
+            window_close_time=market.get("window_close"),
+            resolution_time=settlement.get("timestamp"),
+            resolution_delay_seconds=settlement.get("resolution_delay_sec"),
+            price_at_close=settlement.get("price_at_close"),
+            final_price=1.0 if settlement.get("won") else 0.0 if settlement.get("won") is False else None,
+
+            # On-chain data
+            block_number=on_chain.get("block_number"),
+            gas_used=on_chain.get("gas_used"),
+            tx_fee_matic=on_chain.get("tx_fee_matic"),
+            on_chain_timestamp=on_chain.get("timestamp"),
+
+            # Delay model breakdown
+            delay_model_breakdown=copytrade.get("delay_breakdown") if copytrade else None,
+
+            # Settlement status
+            settlement_status=settlement.get("status", "pending"),
+            force_exit_reason=settlement.get("force_exit_reason"),
+        )
 
     def to_history_dict(self) -> dict:
         """Convert trade to a detailed history dictionary."""
@@ -240,6 +490,7 @@ class TradingState:
         trade.outcome = outcome
         trade.won = trade.direction == outcome
         trade.settled_at = int(time.time() * 1000)
+        trade.settlement_status = "settled"
 
         # Resolution timing
         resolution_time = int(time.time())
@@ -285,11 +536,22 @@ class TradingState:
         self.daily_pnl += trade.pnl
         self.bankroll += trade.pnl
 
+    def mark_pending_as_force_exit(self, reason: str):
+        """Mark all pending trades as force_exit before shutdown.
+
+        Args:
+            reason: "insufficient_bankroll" or "shutdown"
+        """
+        for trade in self.trades:
+            if trade.settlement_status == "pending" and trade.outcome is None:
+                trade.settlement_status = "force_exit"
+                trade.force_exit_reason = reason
+
     def save(self):
         """Save current state and append new trades to full history."""
-        # Save working state (recent trades for fast loading)
+        # Save working state (recent trades for fast loading) using nested format
         data = {
-            "trades": [asdict(t) for t in self.trades[-100:]],  # keep last 100 for working state
+            "trades": [t.to_nested_json() for t in self.trades[-100:]],  # keep last 100 for working state
             "daily_bets": self.daily_bets,
             "daily_pnl": self.daily_pnl,
             "last_reset_date": self.last_reset_date,
@@ -342,17 +604,17 @@ class TradingState:
             print(f"[history] Appended {len(new_trades)} trade(s) to {history_file} (total: {len(existing)})")
 
     def _update_settled_trades_in_history(self):
-        """Update settled trades in the full history file."""
+        """Update settled trades in the full history file (nested format)."""
         history_file = "trade_history_full.json"
 
         if not os.path.exists(history_file):
             return
 
-        # Find settled trades that need updating
+        # Find settled or force_exit trades that need updating
         settled_trades = {
             f"{t.timestamp}_{t.executed_at}_{t.direction}": t
             for t in self.trades
-            if t.outcome is not None  # has been settled
+            if t.settlement_status in ("settled", "force_exit")
         }
 
         if not settled_trades:
@@ -365,24 +627,55 @@ class TradingState:
         except (json.JSONDecodeError, Exception):
             return
 
-        # Update settled trades in history
+        # Update settled trades in history (nested format)
         updated_count = 0
         for i, entry in enumerate(history):
-            trade_id = f"{entry.get('timestamp')}_{entry.get('executed_at')}_{entry.get('direction')}"
+            # Get trade ID from nested format (or reconstruct from old format for migration)
+            trade_id = entry.get("id")
+            if not trade_id:
+                # Fallback for old flat format during migration
+                market = entry.get("market", {})
+                position = entry.get("position", {})
+                execution = entry.get("execution", {})
+                ts = market.get("timestamp") or entry.get("timestamp")
+                exec_at = execution.get("timestamp") or entry.get("executed_at")
+                direction = position.get("direction") or entry.get("direction")
+                if ts and exec_at and direction:
+                    trade_id = f"{ts}_{exec_at}_{direction}"
 
-            # Check if this trade has been settled but history entry is not
-            if trade_id in settled_trades and entry.get("outcome") is None:
+            if not trade_id:
+                continue
+
+            # Check if this trade has been settled/force_exit but history entry is not
+            settlement = entry.get("settlement", {})
+            current_status = settlement.get("status", "pending")
+
+            if trade_id in settled_trades and current_status == "pending":
                 settled_trade = settled_trades[trade_id]
-                # Update settlement fields
-                history[i]["outcome"] = settled_trade.outcome
-                history[i]["won"] = settled_trade.won
-                history[i]["settled_at"] = settled_trade.settled_at
-                history[i]["pnl"] = settled_trade.pnl
-                history[i]["shares_bought"] = settled_trade.shares_bought
-                history[i]["gross_payout"] = settled_trade.gross_payout
-                history[i]["gross_profit"] = settled_trade.gross_profit
-                history[i]["fee_amount"] = settled_trade.fee_amount
-                history[i]["net_profit"] = settled_trade.net_profit
+
+                # Update settlement object in nested structure
+                history[i]["settlement"] = {
+                    "status": settled_trade.settlement_status,
+                    "outcome": settled_trade.outcome,
+                    "won": settled_trade.won,
+                    "timestamp": settled_trade.settled_at,
+                    "resolution_delay_sec": settled_trade.resolution_delay_seconds,
+                    "price_at_close": settled_trade.price_at_close,
+                    "gross_payout": settled_trade.gross_payout,
+                    "gross_profit": settled_trade.gross_profit,
+                    "fee_amount": settled_trade.fee_amount,
+                    "net_profit": settled_trade.net_profit,
+                }
+
+                # Add force_exit_reason if applicable
+                if settled_trade.settlement_status == "force_exit":
+                    history[i]["settlement"]["force_exit_reason"] = settled_trade.force_exit_reason
+
+                # Update position.shares if it was calculated during settlement
+                if settled_trade.shares_bought > 0:
+                    if "position" in history[i]:
+                        history[i]["position"]["shares"] = settled_trade.shares_bought
+
                 updated_count += 1
 
         # Save if any updates were made
@@ -595,7 +888,20 @@ class TradingState:
             try:
                 with open(Config.TRADES_FILE) as f:
                     data = json.load(f)
-                state.trades = [Trade(**t) for t in data.get("trades", [])]
+
+                # Load trades - detect nested vs flat format
+                trades_data = data.get("trades", [])
+                loaded_trades = []
+                for t in trades_data:
+                    # Nested format has "id" field, flat format has "timestamp" at root
+                    if "id" in t or "market" in t:
+                        loaded_trades.append(Trade.from_nested_json(t))
+                    else:
+                        # Legacy flat format - skip (starting fresh per plan)
+                        print(f"[trader] Skipping old format trade, starting fresh")
+                        continue
+                state.trades = loaded_trades
+
                 state.daily_bets = data.get("daily_bets", 0)
                 state.daily_pnl = data.get("daily_pnl", 0.0)
                 state.last_reset_date = data.get("last_reset_date", "")
@@ -611,7 +917,12 @@ class TradingState:
                 with open(history_file) as f:
                     history = json.load(f)
                 for t in history:
-                    trade_id = f"{t.get('timestamp')}_{t.get('executed_at')}_{t.get('direction')}"
+                    # Handle both nested and flat format for trade ID extraction
+                    if "id" in t:
+                        trade_id = t["id"]
+                    else:
+                        # Legacy format
+                        trade_id = f"{t.get('timestamp')}_{t.get('executed_at')}_{t.get('direction')}"
                     state._saved_trade_ids.add(trade_id)
                 print(f"[history] Loaded {len(state._saved_trade_ids)} trades from history")
             except Exception as e:
@@ -623,7 +934,7 @@ class TradingState:
     def backfill_settlements(cls) -> tuple[int, int]:
         """Backfill settlement data for unsettled trades by querying markets.
 
-        Returns tuple of (updated_count, remaining_count).
+        Works with nested JSON format. Returns tuple of (updated_count, remaining_count).
         """
         from polymarket import PolymarketClient
 
@@ -640,8 +951,13 @@ class TradingState:
             print(f"[backfill] Error loading history: {e}")
             return 0, 0
 
-        # Find unsettled trades
-        unsettled = [(i, t) for i, t in enumerate(history) if t.get("outcome") is None]
+        # Find unsettled trades (nested format)
+        unsettled = []
+        for i, t in enumerate(history):
+            settlement = t.get("settlement", {})
+            if settlement.get("status", "pending") == "pending":
+                unsettled.append((i, t))
+
         if not unsettled:
             print("[backfill] No unsettled trades found")
             return 0, 0
@@ -653,7 +969,9 @@ class TradingState:
         still_pending = 0
 
         for idx, entry in unsettled:
-            market_ts = entry.get("timestamp")
+            # Get market timestamp from nested format
+            market_obj = entry.get("market", {})
+            market_ts = market_obj.get("timestamp")
             if not market_ts:
                 continue
 
@@ -668,13 +986,17 @@ class TradingState:
                 still_pending += 1
                 continue
 
-            # Calculate settlement
-            direction = entry.get("direction")
+            # Calculate settlement from nested format
+            position = entry.get("position", {})
+            execution = entry.get("execution", {})
+            fees = entry.get("fees", {})
+
+            direction = position.get("direction")
             outcome = market.outcome
             won = direction == outcome
-            amount = entry.get("amount", 0)
-            exec_price = entry.get("execution_price") or entry.get("entry_price", 0.5)
-            fee_pct = entry.get("fee_pct", 0)
+            amount = position.get("amount", 0)
+            exec_price = execution.get("fill_price") or execution.get("entry_price", 0.5)
+            fee_pct = fees.get("pct", 0)
 
             shares_bought = amount / exec_price if exec_price > 0 else 0
 
@@ -683,27 +1005,32 @@ class TradingState:
                 gross_profit = gross_payout - amount
                 fee_amount = gross_profit * fee_pct if gross_profit > 0 else 0
                 net_profit = gross_profit - fee_amount
-                pnl = net_profit
             else:
                 gross_payout = 0.0
                 gross_profit = -amount
                 fee_amount = 0.0
                 net_profit = -amount
-                pnl = -amount
 
-            # Update entry
-            history[idx]["outcome"] = outcome
-            history[idx]["won"] = won
-            history[idx]["settled_at"] = int(time.time() * 1000)
-            history[idx]["pnl"] = pnl
-            history[idx]["shares_bought"] = shares_bought
-            history[idx]["gross_payout"] = gross_payout
-            history[idx]["gross_profit"] = gross_profit
-            history[idx]["fee_amount"] = fee_amount
-            history[idx]["net_profit"] = net_profit
+            # Update settlement in nested structure
+            history[idx]["settlement"] = {
+                "status": "settled",
+                "outcome": outcome,
+                "won": won,
+                "timestamp": int(time.time() * 1000),
+                "resolution_delay_sec": None,
+                "price_at_close": market.up_price if direction == "up" else market.down_price,
+                "gross_payout": gross_payout,
+                "gross_profit": gross_profit,
+                "fee_amount": fee_amount,
+                "net_profit": net_profit,
+            }
+
+            # Update position shares
+            if "position" in history[idx]:
+                history[idx]["position"]["shares"] = shares_bought
 
             emoji = "✓" if won else "✗"
-            print(f"[backfill] {emoji} {market.slug}: {direction.upper()} -> {outcome.upper()} | PnL: ${pnl:+.2f}")
+            print(f"[backfill] {emoji} {market.slug}: {direction.upper()} -> {outcome.upper()} | PnL: ${net_profit:+.2f}")
             updated_count += 1
 
         # Save updated history
@@ -724,7 +1051,15 @@ class TradingState:
             try:
                 with open(history_file) as f:
                     history = json.load(f)
-                state.trades = [Trade(**t) for t in history]
+                loaded_trades = []
+                for t in history:
+                    # Nested format has "id" field
+                    if "id" in t or "market" in t:
+                        loaded_trades.append(Trade.from_nested_json(t))
+                    else:
+                        # Legacy flat format - skip
+                        continue
+                state.trades = loaded_trades
                 print(f"[history] Loaded {len(state.trades)} trades from full history")
             except Exception as e:
                 print(f"[history] Error loading full history: {e}")
