@@ -19,7 +19,7 @@ repos:
 
       - id: ty-check
         name: ty typecheck
-        entry: ty check
+        entry: .venv/bin/ty check
         language: system
         pass_filenames: false
         always_run: true
