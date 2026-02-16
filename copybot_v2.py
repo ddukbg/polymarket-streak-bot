@@ -22,15 +22,15 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-from config import Config, LOCAL_TZ, TIMEZONE_NAME
-from copytrade import CopySignal
-from copytrade_ws import HybridCopytradeMonitor
-from logging_config import get_logger, StructuredLogger
-from polymarket import PolymarketClient, DelayImpactModel
-from polymarket_ws import MarketDataCache, TradeEvent
-from resilience import CircuitBreaker, RateLimiter, HealthCheck, CircuitOpenError, categorize_error, ErrorCategory
-from selective_filter import SelectiveFilter
-from trader import LiveTrader, PaperTrader, TradingState
+from src.config import Config, LOCAL_TZ, TIMEZONE_NAME
+from src.strategies.copytrade import CopySignal
+from src.strategies.copytrade_ws import HybridCopytradeMonitor
+from src.infra.logging_config import get_logger, StructuredLogger
+from src.core.polymarket import PolymarketClient, DelayImpactModel
+from src.core.polymarket_ws import MarketDataCache, TradeEvent
+from src.infra.resilience import CircuitBreaker, RateLimiter, HealthCheck, CircuitOpenError, categorize_error, ErrorCategory
+from src.strategies.selective_filter import SelectiveFilter
+from src.core.trader import LiveTrader, PaperTrader, TradingState
 
 # Pattern for BTC 5-min markets
 BTC_5M_PATTERN = re.compile(r"^btc-updown-5m-(\d+)$")

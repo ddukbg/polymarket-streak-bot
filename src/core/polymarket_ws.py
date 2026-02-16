@@ -411,7 +411,7 @@ class PolymarketWebSocket:
         Returns: (exec_price, spread, slippage_pct, fill_pct, delay_impact_pct, delay_breakdown)
         Falls back to REST API if no cached data.
         """
-        from polymarket import DelayImpactModel
+        from src.core.polymarket import DelayImpactModel
 
         book = self.get_orderbook(token_id)
 
@@ -744,7 +744,7 @@ class MarketDataCache:
     """
 
     def __init__(self, use_websocket: bool = True):
-        from polymarket import PolymarketClient
+        from src.core.polymarket import PolymarketClient
 
         self._rest_client = PolymarketClient()
         self._ws: PolymarketWebSocket | None = None

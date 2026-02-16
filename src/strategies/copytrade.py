@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import requests
 
-from config import Config
+from src.config import Config
 
 
 @dataclass

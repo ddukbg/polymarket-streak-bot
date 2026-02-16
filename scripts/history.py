@@ -18,8 +18,8 @@ Usage:
 import argparse
 import time
 from datetime import datetime
-from config import TIMEZONE_NAME
-from trader import TradingState
+from src.config import TIMEZONE_NAME
+from src.core.trader import TradingState
 
 
 def main():

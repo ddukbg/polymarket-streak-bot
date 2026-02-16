@@ -11,10 +11,10 @@ import sys
 import time
 from datetime import datetime
 
-from config import Config, LOCAL_TZ, TIMEZONE_NAME
-from polymarket import PolymarketClient
-from strategy import evaluate, kelly_size
-from trader import LiveTrader, PaperTrader, TradingState
+from src.config import Config, LOCAL_TZ, TIMEZONE_NAME
+from src.core.polymarket import PolymarketClient
+from src.strategies.streak import evaluate, kelly_size
+from src.core.trader import LiveTrader, PaperTrader, TradingState
 
 running = True
 

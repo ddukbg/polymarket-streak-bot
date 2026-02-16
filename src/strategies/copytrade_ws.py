@@ -14,9 +14,9 @@ from typing import Callable
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from blockchain import PolygonscanClient
-from config import Config
-from copytrade import CopySignal
+from src.core.blockchain import PolygonscanClient
+from src.config import Config
+from src.strategies.copytrade import CopySignal
 
 
 @dataclass

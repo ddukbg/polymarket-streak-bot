@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, TypeVar, Any
 
-from config import Config
+from src.config import Config
 
 
 class CircuitState(Enum):

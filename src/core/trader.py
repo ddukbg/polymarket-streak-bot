@@ -6,8 +6,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
-from config import Config, LOCAL_TZ, TIMEZONE_NAME
-from polymarket import Market
+from src.config import Config, LOCAL_TZ, TIMEZONE_NAME
+from src.core.polymarket import Market
 
 
 @dataclass
@@ -789,7 +789,7 @@ class TradingState:
 
     def update_unrealized_pnl(self):
         """Update unrealized PnL for all pending trades based on current market prices."""
-        from polymarket import PolymarketClient
+        from src.core.polymarket import PolymarketClient
 
         pending = [t for t in self.trades if t.outcome is None]
         if not pending:
@@ -936,7 +936,7 @@ class TradingState:
 
         Works with nested JSON format. Returns tuple of (updated_count, remaining_count).
         """
-        from polymarket import PolymarketClient
+        from src.core.polymarket import PolymarketClient
 
         history_file = "trade_history_full.json"
         if not os.path.exists(history_file):
@@ -1086,7 +1086,7 @@ class PaperTrader:
             market_cache: Optional MarketDataCache for faster orderbook lookups
         """
         # Import here to avoid circular import
-        from polymarket import PolymarketClient
+        from src.core.polymarket import PolymarketClient
 
         self._client = PolymarketClient(timeout=Config.REST_TIMEOUT)
         self._market_cache = market_cache
@@ -1478,7 +1478,7 @@ class LiveTrader:
 
         # Get fee rate from market
         fee_rate_bps = market.taker_fee_bps if hasattr(market, 'taker_fee_bps') else 1000
-        from polymarket import PolymarketClient
+        from src.core.polymarket import PolymarketClient
         fee_pct = PolymarketClient.calculate_fee(entry_price, fee_rate_bps)
 
         try:
@@ -1532,7 +1532,7 @@ class LiveTrader:
             order_status = "failed"
 
             # Categorize the error
-            from resilience import categorize_error, ErrorCategory
+            from src.infra.resilience import categorize_error, ErrorCategory
             category = categorize_error(e)
             if category == ErrorCategory.FATAL:
                 print(f"[LIVE] Fatal error (not retryable): {e}")

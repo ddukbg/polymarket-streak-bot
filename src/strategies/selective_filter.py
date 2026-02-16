@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import Config
+from src.config import Config
 
 
 class SelectiveFilter:

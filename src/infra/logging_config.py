@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from config import Config, LOCAL_TZ, TIMEZONE_NAME
+from src.config import Config, LOCAL_TZ, TIMEZONE_NAME
 
 
 # ANSI color codes

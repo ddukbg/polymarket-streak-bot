@@ -11,19 +11,19 @@ import sys
 import time
 from datetime import datetime
 
-from config import Config, LOCAL_TZ, TIMEZONE_NAME
-from polymarket import PolymarketClient
-from trader import LiveTrader, PaperTrader, TradingState
+from src.config import Config, LOCAL_TZ, TIMEZONE_NAME
+from src.core.polymarket import PolymarketClient
+from src.core.trader import LiveTrader, PaperTrader, TradingState
 
 # Try to use the faster hybrid monitor if available
 try:
-    from copytrade_ws import HybridCopytradeMonitor
+    from src.strategies.copytrade_ws import HybridCopytradeMonitor
     USE_HYBRID_MONITOR = True
 except ImportError:
-    from copytrade import CopytradeMonitor
+    from src.strategies.copytrade import CopytradeMonitor
     USE_HYBRID_MONITOR = False
 
-from copytrade import CopySignal
+from src.strategies.copytrade import CopySignal
 
 running = True
 
@@ -175,7 +175,7 @@ Related Commands:
         monitor = HybridCopytradeMonitor(wallets, poll_interval=effective_poll)
         log(f"Using fast hybrid monitor (poll={effective_poll}s)")
     else:
-        from copytrade import CopytradeMonitor
+        from src.strategies.copytrade import CopytradeMonitor
         monitor = CopytradeMonitor(wallets)
 
     # Use faster client with connection pooling
