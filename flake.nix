@@ -16,7 +16,7 @@
             python313
             uv
             ruff
-            pre-commit
+            prek
           ];
           shellHook = ''
             echo "Python $(python --version) | uv $(uv --version) | ruff $(ruff version)"
@@ -30,8 +30,8 @@
             # Activate the venv
             source .venv/bin/activate
 
-            # Install pre-commit hooks
-            pre-commit install >/dev/null 2>&1 || true
+            # Install pre-commit hooks via prek
+            prek install >/dev/null 2>&1 || true
           '';
         };
       });
