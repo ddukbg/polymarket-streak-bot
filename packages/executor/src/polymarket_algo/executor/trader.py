@@ -1313,20 +1313,22 @@ class LiveTrader:
             from py_clob_client.clob_types import MarketOrderArgs, OrderArgs, OrderType
             from py_clob_client.order_builder.constants import BUY, SELL
 
-            # Build client kwargs based on wallet type
-            client_kwargs = {
-                "host": Config.CLOB_API,
-                "key": Config.PRIVATE_KEY,
-                "chain_id": Config.CHAIN_ID,
-            }
-
-            # Add proxy wallet parameters if using Magic/proxy wallet
+            # Build client based on wallet type
             if Config.SIGNATURE_TYPE == 1:
-                client_kwargs["signature_type"] = 1
-                client_kwargs["funder"] = Config.FUNDER_ADDRESS
                 print(f"[trader] Using proxy wallet with funder: {Config.FUNDER_ADDRESS[:10]}...")
-
-            self.client = ClobClient(**client_kwargs)
+                self.client = ClobClient(
+                    host=Config.CLOB_API,
+                    key=Config.PRIVATE_KEY,
+                    chain_id=Config.CHAIN_ID,
+                    signature_type=1,
+                    funder=Config.FUNDER_ADDRESS,
+                )
+            else:
+                self.client = ClobClient(
+                    host=Config.CLOB_API,
+                    key=Config.PRIVATE_KEY,
+                    chain_id=Config.CHAIN_ID,
+                )
 
             # Derive API credentials
             creds = self.client.create_or_derive_api_creds()
@@ -1474,12 +1476,12 @@ class LiveTrader:
                 token_id=token_id,
                 amount=amount,  # USD amount to spend
                 side=self.BUY,
-                order_type=self.OrderType.FOK,  # Fill-Or-Kill for immediate execution
+                order_type=self.OrderType.FOK,  # type: ignore[invalid-argument-type]  # Fill-Or-Kill for immediate execution
             )
 
             # Sign and submit the order
             signed_order = self.client.create_market_order(market_order)
-            response = self.client.post_order(signed_order, self.OrderType.FOK)
+            response = self.client.post_order(signed_order, self.OrderType.FOK)  # type: ignore[invalid-argument-type]
 
             resp_dict: dict = response if isinstance(response, dict) else {}
             order_id = resp_dict.get("orderID", resp_dict.get("id", "unknown"))
