@@ -11,6 +11,9 @@ dependencies = [
   "polymarket-algo-core",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/polymarket_algo"]
+
 [build-system]
 requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"

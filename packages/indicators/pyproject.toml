@@ -11,6 +11,9 @@ rsi = "polymarket_algo.indicators:RSIIndicator"
 macd = "polymarket_algo.indicators:MACDIndicator"
 bollinger = "polymarket_algo.indicators:BollingerIndicator"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/polymarket_algo"]
+
 [build-system]
 requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"

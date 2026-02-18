@@ -7,6 +7,9 @@ dependencies = ["pandas>=3.0.0", "polymarket-algo-core"]
 [project.entry-points."polymarket_algo.strategies"]
 rsi_reversal = "example_strategy.rsi_reversal:RSIReversalStrategy"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/example_strategy"]
+
 [build-system]
 requires = ["hatchling>=1.25.0"]
 build-backend = "hatchling.build"
