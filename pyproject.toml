@@ -85,7 +85,3 @@ include = [
   "examples/custom_strategy/src",
 ]
 
-[dependency-groups]
-dev = [
-    "ruff>=0.11",
-]
