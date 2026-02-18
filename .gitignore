@@ -8,3 +8,5 @@ trades.json
 bot.log
 .playwright-mcp/
 .DS_Store
+trade_history_full.json
+data/*.csv
