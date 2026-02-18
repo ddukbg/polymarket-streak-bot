@@ -167,7 +167,7 @@ class PolymarketWebSocket:
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._connected = asyncio.Event()
+        self._connected = threading.Event()
         self._lock = threading.Lock()
 
         # Trade callback queue for thread-safe delivery
@@ -289,9 +289,11 @@ class PolymarketWebSocket:
 
     async def _resubscribe(self):
         """Resubscribe to all tokens/markets after reconnect."""
-        if self._subscribed_markets:
-            for market_id in self._subscribed_markets:
-                await self._send_subscribe(market_id)
+        with self._lock:
+            markets = list(self._subscribed_markets)
+
+        for market_id in markets:
+            await self._send_subscribe(market_id)
 
     async def _send_subscribe(self, market_id: str):
         """Send subscription message for a market."""
@@ -358,12 +360,12 @@ class PolymarketWebSocket:
             condition_id: Market condition ID
             token_ids: Optional list of token IDs to track orderbooks for
         """
-        self._subscribed_markets.add(condition_id)
+        with self._lock:
+            self._subscribed_markets.add(condition_id)
 
-        if token_ids:
-            for tid in token_ids:
-                self._subscribed_tokens.add(tid)
-                with self._lock:
+            if token_ids:
+                for tid in token_ids:
+                    self._subscribed_tokens.add(tid)
                     if tid not in self._orderbooks:
                         self._orderbooks[tid] = CachedOrderBook(token_id=tid)
 
@@ -372,7 +374,8 @@ class PolymarketWebSocket:
 
     def unsubscribe_market(self, condition_id: str):
         """Unsubscribe from a market."""
-        self._subscribed_markets.discard(condition_id)
+        with self._lock:
+            self._subscribed_markets.discard(condition_id)
 
         if self._loop and self._ws:
             msg = {
@@ -452,13 +455,17 @@ class PolymarketWebSocket:
     @property
     def stats(self) -> dict:
         """Get connection statistics."""
+        with self._lock:
+            subscribed_markets = len(self._subscribed_markets)
+            cached_orderbooks = len(self._orderbooks)
+
         return {
             "connected": self.is_connected(),
             "reconnect_count": self.reconnect_count,
             "messages_received": self.messages_received,
             "last_message_age": time.time() - self.last_message_time if self.last_message_time else None,
-            "subscribed_markets": len(self._subscribed_markets),
-            "cached_orderbooks": len(self._orderbooks),
+            "subscribed_markets": subscribed_markets,
+            "cached_orderbooks": cached_orderbooks,
         }
 
 
@@ -501,8 +508,8 @@ class UserWebSocket:
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._connected = asyncio.Event()
-        self._authenticated = asyncio.Event()
+        self._connected = threading.Event()
+        self._authenticated = threading.Event()
         self._lock = threading.Lock()
 
         # Track pending orders for status updates
@@ -533,16 +540,35 @@ class UserWebSocket:
             print("[user-ws] Warning: Authentication timeout")
 
     def stop(self):
-        """Stop WebSocket connection."""
+        """Stop WebSocket connection gracefully."""
         self._running = False
+
         if self._loop and self._loop.is_running():
             try:
+                asyncio.run_coroutine_threadsafe(self._graceful_shutdown(), self._loop)
+                time.sleep(0.5)
                 self._loop.call_soon_threadsafe(self._loop.stop)
             except RuntimeError:
                 # Event loop already closed, ignore
                 pass
+
         if self._thread:
             self._thread.join(timeout=2.0)
+
+    async def _graceful_shutdown(self):
+        """Gracefully close WebSocket and cancel tasks."""
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+
+        tasks = [t for t in asyncio.all_tasks(self._loop) if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _run_loop(self):
         """Run asyncio event loop in background thread."""
@@ -553,6 +579,14 @@ class UserWebSocket:
         except Exception as e:
             print(f"[user-ws] Event loop error: {e}")
         finally:
+            try:
+                pending = asyncio.all_tasks(self._loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
             self._loop.close()
 
     async def _connect_loop(self):
@@ -745,6 +779,7 @@ class MarketDataCache:
 
         # Trade callbacks
         self._trade_callbacks: list[Callable[[TradeEvent], None]] = []
+        self._trade_callbacks_lock = threading.Lock()
 
         if use_websocket:
             self._ws = PolymarketWebSocket(on_trade=self._handle_trade)
@@ -763,7 +798,10 @@ class MarketDataCache:
 
     def _handle_trade(self, trade: TradeEvent):
         """Internal trade handler - dispatches to callbacks."""
-        for cb in self._trade_callbacks:
+        with self._trade_callbacks_lock:
+            callbacks = list(self._trade_callbacks)
+
+        for cb in callbacks:
             try:
                 cb(trade)
             except Exception as e:
@@ -771,7 +809,8 @@ class MarketDataCache:
 
     def on_trade(self, callback: Callable[[TradeEvent], None]):
         """Register a trade callback."""
-        self._trade_callbacks.append(callback)
+        with self._trade_callbacks_lock:
+            self._trade_callbacks.append(callback)
 
     def prefetch_markets(self, timestamps: list[int]):
         """Pre-fetch and cache market data for given timestamps.
