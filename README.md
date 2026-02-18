@@ -131,6 +131,10 @@ packages/executor/    → Polymarket execution layer (REST + WebSocket + blockch
 
 Each package is independently installable via uv workspaces.
 
+## Vibe-Coded 🤖
+
+This project was fully vibe-coded by **Dexter**, an [OpenClaw](https://github.com/openclaw/openclaw) AI agent running on NixOS — from architecture implementation to code reviews, testing, and documentation. System design, architectural decisions, and creative direction by [@0xrsydn](https://github.com/0xrsydn).
+
 ## License
 
 MIT
