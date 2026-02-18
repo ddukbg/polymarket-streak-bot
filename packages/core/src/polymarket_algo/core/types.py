@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import pandas as pd
 
@@ -22,6 +22,7 @@ class Strategy(Protocol):
     def param_grid(self) -> dict[str, list[Any]]: ...
 
 
+@runtime_checkable
 class DataFeed(Protocol):
     name: str
 
