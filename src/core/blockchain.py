@@ -1,3 +1,4 @@
+# DEPRECATED: Use polymarket_algo.* packages instead. This file exists for backward compatibility.
 """Polygonscan API client for fetching on-chain transaction data.
 
 Provides blockchain details for Polygon transactions:
